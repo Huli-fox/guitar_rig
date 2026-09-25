@@ -1,0 +1,24 @@
+schema_version = "1.0.0"
+
+id = "guitar_rig"
+version = "0.1.0"
+name = "GuitarRig"
+tagline = "Bake guitar-playing arms and a chest-mounted guitar onto mocap"
+maintainer = "GuitarRig contributors"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+tags = ["Animation", "Rigging"]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/.gitignore",
+  "/.tmp/",
+  "/tests/",
+  "*.zip",
+]
