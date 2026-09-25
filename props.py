@@ -1,7 +1,9 @@
-"""Property groups: scene settings (§3.5), magnets (§3.6), and the per-armature bone map and calibration.
+"""Property groups: scene settings (§3.5), magnets (§3.6), the per-armature bone map and calibration, and the
+guitar frame of GTR_ROOT.
 
 Scene.gtr holds the settings for the scene's character and guitar. Object.gtr_char holds an armature's bone
-map and calibration, so they stay with the character when it is linked into another scene. Lengths in
+map and calibration, so they stay with the character when it is linked into another scene; Object.gtr_guitar
+holds what normalising found on GTR_ROOT. Lengths in
 metres say "(m)" in their names; they deliberately use no length unit, which the scene unit scale would
 rescale.
 """
@@ -14,7 +16,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
 from bpy.types import PropertyGroup
 from mathutils import Euler
 
-from .core import bonemap, calibrate
+from .core import bonemap, calibrate, presets
 
 SIDE_ITEMS = (
     ('L', "Left", "The character's left hand"),
@@ -104,8 +106,9 @@ class GTR_Magnet(PropertyGroup):
     fingers: EnumProperty(name="Fingers", items=FINGER_ITEMS, options={'ENUM_FLAG'},
                           default={'INDEX', 'MIDDLE', 'RING'})
     fingertip_offset_m: FloatProperty(
-        name="Fingertip Offset (m)", default=0.0, precision=4,
-        description="SAO's reference_point_offset_distance, in metres")
+        name="Fingertip Offset", default=0.0, precision=4,
+        description="SAO's reference_point_offset_distance: shifts the plane along its normal for the fingertips. "
+                    "In GTR_ROOT units, so it scales with the guitar (metres for a real-size guitar at scale 1)")
     push_only: BoolProperty(
         name="Push Only", default=False,
         description="The fingertips may push the hand away from the plane but never pull it in")
@@ -240,6 +243,36 @@ class GTR_Character(PropertyGroup):
     calibration: PointerProperty(type=GTR_Calibration)
 
 
+class GTR_Guitar(PropertyGroup):
+    """The guitar frame found by gtr.normalize_frame and the preset fit, stored on GTR_ROOT."""
+
+    is_root: BoolProperty(name="Guitar Root")
+    confidence: EnumProperty(
+        name="Confidence", default='LOW',
+        items=(('HIGH', "High", "All cues agree on the frame"),
+               ('MEDIUM', "Medium", "One cue decided, or one of three disagreed"),
+               ('LOW', "Low", "The cues disagree or are missing: check the axes")))
+    messages: StringProperty()
+    length_m: FloatProperty(name="Length (m)")
+    neck_found: BoolProperty(name="Neck Found")
+    preset: StringProperty(name="Preset", description="Id or file of the preset the landmarks were fitted from")
+    fit_method: EnumProperty(
+        name="Fit", default='BOUNDS',
+        items=(('NECK', "Neck", "Fitted to the neck: length, width and thickness"),
+               ('BOUNDS', "Bounds", "Fitted to the bounding box")))
+    fit_scale: FloatVectorProperty(name="Fit Scale", size=3, default=(1.0, 1.0, 1.0),
+                                   description="Size of the guitar relative to the preset's reference, along X "
+                                               "(neck length), Y (neck width) and Z (neck thickness)")
+
+
+MOUNT_SOURCE_ITEMS = (
+    ('NONE', "Not Set", "No mount yet: load a preset or capture it"),
+    ('PRESET', "Preset", "From a preset: only an estimate"),
+    ('CAPTURE', "Captured", "Captured from a pose of the guitar on the character"),
+)
+_PRESET_ITEMS = presets.enum_items()
+
+
 class GTR_Settings(PropertyGroup):
     """Scene settings (§3.5)."""
 
@@ -248,7 +281,22 @@ class GTR_Settings(PropertyGroup):
     guitar_root: PointerProperty(name="Guitar Root", type=bpy.types.Object, poll=_is_empty,
                                  description="GTR_ROOT: the empty that carries the normalised guitar frame")
     show_overlay: BoolProperty(name="Show Overlay", default=True, update=_redraw,
-                               description="Draw the calibrated frames and fingertips in the viewport")
+                               description="Draw the calibrated frames, fingertips, landmark lines and the mount "
+                                           "in the viewport")
+    preset: EnumProperty(name="Preset", items=_PRESET_ITEMS,
+                         description="Instrument preset: landmarks, magnets, mount, aim and wrist settings")
+
+    # Mount (§5.3)
+    mount_source: EnumProperty(name="Mount", items=MOUNT_SOURCE_ITEMS, default='NONE')
+    mount_t: FloatVectorProperty(
+        name="Mount Offset (m)", size=3, precision=4, update=_redraw,
+        description="Guitar origin relative to the chest bone head, in the rest-aligned chest frame (X: the "
+                    "character's left, Y: up, Z: forward), before the spine auto-scale")
+    mount_q: FloatVectorProperty(
+        name="Mount Rotation", size=4, subtype='QUATERNION', default=(1.0, 0.0, 0.0, 0.0), update=_redraw,
+        description="Guitar frame in the rest-aligned chest frame")
+    mount_frame: IntProperty(name="Capture Frame", description="Frame the mount was captured at")
+    mount_preset: StringProperty(name="Mount Preset", description="Name of the preset the mount came from")
 
     # Mode and range (§5.8)
     mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='FOLLOW')
@@ -328,6 +376,7 @@ CLASSES = (
     GTR_Fingertip,
     GTR_Calibration,
     GTR_Character,
+    GTR_Guitar,
     GTR_Settings,
 )
 
@@ -337,9 +386,11 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.gtr = PointerProperty(type=GTR_Settings)
     bpy.types.Object.gtr_char = PointerProperty(type=GTR_Character)
+    bpy.types.Object.gtr_guitar = PointerProperty(type=GTR_Guitar)
 
 
 def unregister():
+    del bpy.types.Object.gtr_guitar
     del bpy.types.Object.gtr_char
     del bpy.types.Scene.gtr
     for cls in reversed(CLASSES):

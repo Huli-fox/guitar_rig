@@ -105,7 +105,13 @@ class FakeLayout:
 
     def operator(self, idname, **kwargs):
         module, _, name = idname.partition(".")
-        getattr(getattr(bpy.ops, module), name).get_rna_type()
+        rna = getattr(getattr(bpy.ops, module), name).get_rna_type()
+        test = self.test
+
+        class Properties:
+            def __setattr__(self, key, value):
+                test.assertIn(key, rna.properties.keys(), f"{idname}.{key}")
+        return Properties()
 
 
 class PanelTest(unittest.TestCase):

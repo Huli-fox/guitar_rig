@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "name": "Acoustic Guitar",
+  "description": "XR Animator's acoustic guitar scene (guitar_collection_v9.1/scene.json)",
+  "source": "guitar_collection_v9.1/scene.json and props/acoustic_guitar/acoustic_guitar.glb",
+  "verified": true,
+  "notes": [
+    "Positions are SAO's, in GLB units of the acoustic_guitar prop; placement.scale 0.088 makes 1 unit 0.008 m.",
+    "The mount is only a starting guess: pose the guitar on the character and use Capture Mount.",
+    "Magnet 3 uses SAO's offset_fingertip (v1); it is mapped to fingertip v2 without push-only.",
+    "mocap_factor settings are ignored: they only matter for external VMC input."
+  ],
+  "sao_placement_scale": 0.088,
+  "frame": [0.9999361, 0.00434145, 0.01036839, 0.00123805],
+  "reference": {
+    "bounds_min": [-0.358892, -0.19099, -0.060869],
+    "bounds_max": [0.680613, 0.198454, 0.052911],
+    "neck": {"joint_x": 0.155663, "nut_x": 0.519489, "width_joint": 0.05562, "width_nut": 0.04576, "center_y": 0.003704, "fret_z": 0.047892, "back_z": 0.0093}
+  },
+  "landmarks": {
+    "NECK_PIVOT": {"position": [4.373398, -2.754097, 6.2819]},
+    "NUT": {"position": [64.4079, -1.828405, 7.2436]},
+    "FRETBOARD_PLANE": {"position": [4.373398, -2.754097, 6.2819], "normal": [0, 0, 1]},
+    "FRETBOARD_EDGE": {"position": [4.373398, -2.754097, 6.2819], "normal": [0, 1, 0]},
+    "NECK_BODY_BARRIER": {"position": [22.0301, 0, 0], "normal": [1, 0, 0]},
+    "STRUM_A": {"position": [-6.749897, 6, 10]},
+    "STRUM_B": {"position": [5, 6, 10]},
+    "STRUM_X_PLANE": {"position": [-6.749897, 6, 10], "normal": [1, 0, 0]},
+    "STRING_PLANE": {"position": [4.373398, -2.754097, 11.2819], "normal": [0, 0, 1]}
+  },
+  "mount": {"sao_bone": "上半身2", "sao_position": [-1.3, -0.2, -1.8], "sao_rotation": [10, 15, 5]},
+  "aim": {"sao_offset": [0.6, -0.25, 0]},
+  "wrist": {"sao_offset": [60, 180, 0], "weight": 0.5},
+  "magnets": [
+    {
+      "sao_index": 0, "preset_id": "STRUM_LINE", "name": "Strum Line", "hand": "R", "kind": "LINE",
+      "a": "STRUM_A", "b": "STRUM_B", "effective_distance": 3, "power": 0
+    },
+    {
+      "sao_index": 1, "preset_id": "STRUM_POSITION", "name": "Strum Position", "hand": "R", "kind": "PLANE",
+      "a": "STRUM_X_PLANE", "crossable": true, "effective_distance": 2, "power": 0
+    },
+    {
+      "sao_index": 2, "preset_id": "STRING_BARRIER", "name": "String Barrier", "hand": "R", "kind": "PLANE",
+      "a": "STRING_PLANE", "crossable": false, "effective_distance": 3, "power": -99,
+      "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"], "fingertip_offset": -5, "push_only": true
+    },
+    {
+      "sao_index": 3, "preset_id": "FRETBOARD_PLANE", "name": "Fretboard Plane", "hand": "L", "kind": "PLANE",
+      "a": "FRETBOARD_PLANE", "crossable": true, "effective_distance": 6, "power": 1, "use_default_rotation": true,
+      "hand_offset_mode": "PARENT_BONE", "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"]
+    },
+    {
+      "sao_index": 4, "preset_id": "NECK_BODY_BARRIER", "name": "Neck/Body Barrier", "hand": "L", "kind": "PLANE",
+      "a": "NECK_BODY_BARRIER", "crossable": false, "effective_distance": 3, "power": -99,
+      "use_default_rotation": true
+    },
+    {
+      "sao_index": 5, "preset_id": "FRETBOARD_EDGE", "name": "Fretboard Edge", "hand": "L", "kind": "PLANE",
+      "a": "FRETBOARD_EDGE", "crossable": false, "effective_distance": 6, "power": -99, "use_default_rotation": true,
+      "hand_offset_mode": "PARENT_BONE", "filter": "ROTATION_BASED"
+    }
+  ]
+}

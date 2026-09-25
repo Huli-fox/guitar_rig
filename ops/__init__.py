@@ -1,8 +1,8 @@
-"""Operators. setup: bone map and calibration."""
+"""Operators. setup: bone map and calibration; guitar: frame, presets and landmarks; mount: chest mount."""
 
-from . import setup
+from . import guitar, mount, setup
 
-_MODULES = (setup,)
+_MODULES = (setup, guitar, mount)
 
 
 def register():

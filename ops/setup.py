@@ -4,16 +4,7 @@ import bpy
 
 from .. import props
 from ..core import bonemap, calibrate
-
-
-def target_armature(context):
-    """The scene's character armature, or the active object if it is an armature."""
-    obj = context.scene.gtr.armature
-    if obj is None:
-        active = context.active_object
-        if active is not None and active.type == 'ARMATURE':
-            obj = active
-    return obj
+from .common import report, tag_redraw, target_armature
 
 
 def _poll_armature(cls, context):
@@ -25,18 +16,6 @@ def _poll_armature(cls, context):
         cls.poll_message_set("Leave Edit Mode first")
         return False
     return True
-
-
-def _report(op, messages):
-    for level, text in messages:
-        op.report({'WARNING'} if level in {'ERROR', 'WARNING'} else {'INFO'}, text)
-
-
-def _tag_redraw(context):
-    screen = context.screen
-    for area in (screen.areas if screen is not None else ()):
-        if area.type == 'VIEW_3D':
-            area.tag_redraw()
 
 
 class GTR_OT_auto_map_bones(bpy.types.Operator):
@@ -60,10 +39,10 @@ class GTR_OT_auto_map_bones(bpy.types.Operator):
         bone_map.source = result.source
         slots = [slot for slot in bonemap.SLOTS if slot.group != 'CHAIN']
         found = sum(1 for slot in slots if result.mapping[slot.key])
-        _report(self, result.messages)
+        report(self, result.messages)
         self.report({'INFO'}, f"Mapped {found} of {len(slots)} bones ({result.source}). "
                               "Check the map, then calibrate.")
-        _tag_redraw(context)
+        tag_redraw(context)
         return {'FINISHED'}
 
 
@@ -95,10 +74,10 @@ class GTR_OT_calibrate(bpy.types.Operator):
             calibration.is_valid = False
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-        _report(self, cal.messages)
+        report(self, cal.messages)
         self.report({'INFO'}, f"Calibrated: height {cal.height:.2f} m; ratios arm {cal.ratio_arm:.3f}, "
                               f"palm {cal.ratio_palm:.3f}, spine {cal.ratio_spine:.3f}")
-        _tag_redraw(context)
+        tag_redraw(context)
         return {'FINISHED'}
 
 

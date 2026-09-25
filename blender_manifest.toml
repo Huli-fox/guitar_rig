@@ -20,5 +20,6 @@ paths_exclude_pattern = [
   "/.gitignore",
   "/.tmp/",
   "/tests/",
+  "/tools/",
   "*.zip",
 ]

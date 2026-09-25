@@ -1,1 +1,2 @@
-"""Solver core: maths, bone map, calibration and bake conversion. No UI code lives here."""
+"""Solver core: maths, bone map, calibration, guitar frame, presets, landmarks, mount and bake conversion. No UI
+code lives here."""
