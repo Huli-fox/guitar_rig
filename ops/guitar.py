@@ -18,18 +18,24 @@ ROOT_NAME = "GTR_ROOT"
 
 # Guitar objects ------------------------------------------------------------------------------------------------
 
-def _is_character_mesh(obj):
-    parent = obj.parent
-    return ((parent is not None and parent.type == 'ARMATURE')
-            or any(modifier.type == 'ARMATURE' for modifier in obj.modifiers))
+def _belongs_to(obj, armature):
+    """Whether mesh `obj` is part of the character `armature`: below it, or deformed by it."""
+    if armature is None:
+        return False
+    return (any(parent is armature for parent in _ancestors(obj))
+            or any(modifier.type == 'ARMATURE' and modifier.object is armature for modifier in obj.modifiers))
 
 
 def selected_meshes(context):
-    """Selected meshes and the meshes below selected objects, leaving out skinned character meshes."""
+    """Selected meshes and the meshes below selected objects, leaving out the character's meshes.
+
+    Only the character armature's meshes are left out: a guitar may be rigged with an armature of its own.
+    """
+    character = context.scene.gtr.armature
     meshes = []
     for obj in context.selected_objects:
         for item in (obj, *obj.children_recursive):
-            if item.type == 'MESH' and not _is_character_mesh(item) and item not in meshes:
+            if item.type == 'MESH' and not _belongs_to(item, character) and item not in meshes:
                 meshes.append(item)
     return meshes
 
