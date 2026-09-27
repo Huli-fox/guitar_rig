@@ -4,9 +4,9 @@ A port of the XR Animator / System Animator Online (SAO) guitar constraint syste
 guitar aimed at the fretting hand, with wrist targets pulled onto guitar landmarks ("magnets").
 """
 
-from . import ops, props, ui
+from . import ops, props, rig, ui
 
-_MODULES = (props, ops, ui)
+_MODULES = (props, rig, ops, ui)
 
 
 def register():

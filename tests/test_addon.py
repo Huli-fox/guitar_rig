@@ -103,6 +103,14 @@ class FakeLayout:
         self.test.assertIn(name, data.bl_rna.properties.keys(), name)
         self.test.assertIn(search_name, search_data.bl_rna.properties.keys(), search_name)
 
+    def template_list(self, list_type, list_id, data, name, active_data, active_name, **kwargs):
+        self.test.assertTrue(hasattr(bpy.types, list_type), list_type)
+        self.test.assertIn(name, data.bl_rna.properties.keys(), name)
+        self.test.assertIn(active_name, active_data.bl_rna.properties.keys(), active_name)
+
+    def separator(self, **kwargs):
+        pass
+
     def operator(self, idname, **kwargs):
         module, _, name = idname.partition(".")
         rna = getattr(getattr(bpy.ops, module), name).get_rna_type()

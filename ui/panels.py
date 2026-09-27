@@ -1,4 +1,5 @@
-"""Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mount."""
+"""Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mount,
+magnets and solve."""
 
 import math
 import textwrap
@@ -6,7 +7,9 @@ import textwrap
 import bpy
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, calibrate, landmarks
+from ..core import bonemap, calibrate, landmarks, magnets, solver
+from ..core.bonemap import SIDES
+from ..rig import build
 
 MESSAGE_ICONS = {'ERROR': 'CANCEL', 'WARNING': 'ERROR', 'INFO': 'INFO'}
 AXIS_NAMES = ("X (char. left)", "Y (up)", "Z (forward)")
@@ -241,5 +244,143 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
         draw_messages(layout, context, messages)
 
 
-CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_mount)
+def draw_magnet(layout, context, settings, item, index):
+    """The settings of one magnet, its reach on the character, and what it did in the solve the rig shows."""
+    box = layout.box()
+    col = box.column()
+    col.row(align=True).prop(item, "hand", expand=True)
+    col.row(align=True).prop(item, "kind", expand=True)
+    col.prop(item, "landmark_a", text="Plane" if item.kind == 'PLANE' else "Start")
+    if item.kind == 'LINE':
+        col.prop(item, "landmark_b", text="End")
+    else:
+        col.prop(item, "crossable")
+    col.prop(item, "use_default_rotation")
+    col = box.column(align=True)
+    col.prop(item, "effective_distance_m")
+    col.prop(item, "peak")
+    col.prop(item, "power")
+    col.prop(item, "hysteresis")
+    col = box.column()
+    col.prop(item, "hand_offset_mode")
+    if item.hand_offset_mode == 'CUSTOM':
+        col.prop(item, "hand_offset")
+    if item.hand_offset_mode != 'NONE':
+        col.prop(item, "apply_axis_rot")
+    if item.kind == 'PLANE':
+        col.prop(item, "fingertip_mode")
+        if item.fingertip_mode == 'V2':
+            col.row(align=True).prop(item, "fingers")
+            col.prop(item, "fingertip_offset_m")
+            col.prop(item, "push_only")
+    col.prop(item, "filter")
+
+    rows = []
+    obj = settings.armature
+    cal = obj.gtr_char.calibration if obj is not None else None
+    if cal is not None and cal.is_valid:
+        reach = item.effective_distance_m * magnets.distance_scale(settings.autoscale_policy, cal.ratio_arm)
+        rows.append(("Reach", f"{reach:.3f} m on this character"))
+    result = solver.shown_result(context.scene)
+    hit = result.hit(index) if result is not None else None
+    if hit is not None:
+        state = "clamp" if hit.barrier else f"weight {hit.weight:.2f}"
+        rows.append(("Solve", f"{hit.distance * result.metres_per_bu * 100.0:.1f} cm away, {state}"))
+    if rows:
+        draw_rows(box, rows, factor=0.3)
+    if (item.kind == 'PLANE' and item.fingertip_mode != 'NONE') or item.filter != 'NONE':
+        draw_messages(box, context, [('INFO', "Fingertips and filters are not applied by the solver yet.")])
+
+
+class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
+    bl_idname = "GTR_PT_magnets"
+    bl_label = "Magnets"
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.gtr
+        row = layout.row()
+        row.template_list("GTR_UL_magnets", "", settings, "magnets", settings, "active_magnet_index", rows=4)
+        col = row.column(align=True)
+        col.operator("gtr.magnet_add", text="", icon='ADD')
+        col.operator("gtr.magnet_remove", text="", icon='REMOVE')
+        col.separator()
+        col.operator("gtr.magnet_move", text="", icon='TRIA_UP').direction = 'UP'
+        col.operator("gtr.magnet_move", text="", icon='TRIA_DOWN').direction = 'DOWN'
+        layout.prop(settings, "show_magnets")
+        index = settings.active_magnet_index
+        if 0 <= index < len(settings.magnets):
+            draw_magnet(layout, context, settings, settings.magnets[index], index)
+        else:
+            draw_messages(layout, context, [('INFO', "Load a preset for SAO's magnets, or add your own. They act "
+                                                     "in list order.")])
+
+
+class GTR_PT_solve(_SubPanel, bpy.types.Panel):
+    bl_idname = "GTR_PT_solve"
+    bl_label = "Solve"
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        settings = scene.gtr
+        if settings.guitar_root is None or not settings.armature.gtr_char.calibration.is_valid:
+            layout.label(text="Normalise the guitar and calibrate first", icon='INFO')
+            return
+        rig = build.find(settings)
+        messages = []
+        row = layout.row(align=True)
+        row.operator("gtr.build_rig", text="Rebuild Rig" if rig is not None else "Build Rig", icon='CON_KINEMATIC')
+        row.operator("gtr.clean_rig", text="", icon='TRASH')
+        if rig is None and settings.rig_collection is not None:
+            messages.append(('WARNING', "The helper rig does not match the character or its bone map: build it "
+                                        "again."))
+        elif rig is None:
+            messages.append(('INFO', "Build Rig adds IK and rotation constraints to each arm. They stay off, so "
+                                     "the mocap plays as before, until you solve a frame."))
+
+        layout.prop(settings, "mode", expand=True)
+        if settings.mode == 'FOLLOW':
+            messages.append(('INFO', "The neck aim is not solved yet: the guitar stays on its mount in both "
+                                     "modes."))
+        header, body = layout.panel("GTR_solve_options", default_closed=True)
+        header.label(text="Options")
+        if body is not None:
+            col = body.column()
+            col.prop(settings, "reach_clamp")
+            col.prop(settings, "barriers_ignore_distance")
+            col.prop(settings, "autoscale_policy")
+            col.prop(settings, "iterations")
+            col.prop(settings, "use_right_root_bias")
+            sub = col.column()
+            sub.active = settings.use_right_root_bias
+            sub.prop(settings, "right_root_bias")
+
+        row = layout.row(align=True)
+        row.operator("gtr.solve_frame", icon='PLAY')
+        row.operator("gtr.clear_solve", text="", icon='ARMATURE_DATA')
+        result = solver.shown_result(scene)
+        if result is not None:
+            rows = []
+            for side in SIDES:
+                side_result = result.sides[side]
+                moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
+                text = f"moved {moved:.1f} cm" + (", reach clamped" if side_result.clamped else "")
+                rows.append((f"{'Left' if side == 'L' else 'Right'} wrist", text))
+                for index, hit in side_result.hits:
+                    if hit.weight > 0.0 and index < len(settings.magnets):
+                        rows.append(("   " + settings.magnets[index].name,
+                                     "clamp" if hit.barrier else f"weight {hit.weight:.2f}"))
+            draw_rows(layout, rows, factor=0.5)
+            messages += result.messages
+        elif settings.solve_active:
+            messages.append(('INFO', "The arms show a solve whose details were lost (undo or reload): solve the "
+                                     "frame again, or show the mocap."))
+        else:
+            messages.append(('INFO', "Solve Frame shows the solved arms until the frame changes."))
+        draw_messages(layout, context, messages)
+
+
+CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_mount, GTR_PT_magnets,
+           GTR_PT_solve)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

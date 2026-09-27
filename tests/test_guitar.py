@@ -21,6 +21,8 @@ TMP_DIR = os.path.join(os.path.dirname(HERE), ".tmp")
 def reset_scene():
     rigs.clear_scene()
     guitars.clear()
+    for coll in list(bpy.data.collections):
+        bpy.data.collections.remove(coll)
     settings = bpy.context.scene.gtr
     for key in settings.bl_rna.properties.keys():
         if key not in {"rna_type", "name"}:
@@ -519,6 +521,7 @@ class LandmarkPanelTest(unittest.TestCase):
         labels = draw()
         self.assertIn("Landmarks", labels)
         self.assertTrue(any(label.startswith("Preset estimate") for label in labels))
+        bpy.context.scene.gtr.show_magnets = False     # the magnets have their own overlay tests
         lines, colors, _, _ = overlay.build_geometry(bpy.context)
         self.assertEqual(len(lines), len(before[0]) + 2 * 2 + 3 * 2)    # neck and strum lines, mount tripod
         self.assertEqual(len(colors), len(lines))

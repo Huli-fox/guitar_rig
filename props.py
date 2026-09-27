@@ -16,7 +16,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
 from bpy.types import PropertyGroup
 from mathutils import Euler
 
-from .core import bonemap, calibrate, presets
+from .core import bonemap, calibrate, magnets, presets
 
 SIDE_ITEMS = (
     ('L', "Left", "The character's left hand"),
@@ -57,68 +57,74 @@ def _redraw(self, context):
                 area.tag_redraw()
 
 
-class GTR_Magnet(PropertyGroup):
-    """A line or plane in guitar space that pulls one wrist target (§3.6, §5.5). `name` is the display name."""
+def _mode_changed(self, context):
+    magnets.apply_mode(self, self.mode)
+    _redraw(self, context)
 
-    enabled: BoolProperty(name="Enabled", default=True)
+
+class GTR_Magnet(PropertyGroup):
+    """A line or plane in guitar space that pulls one wrist target (§3.6, §5.5). `name` is the display name.
+    Edits redraw the viewport, whose overlay shows the magnets."""
+
+    enabled: BoolProperty(name="Enabled", default=True, update=_redraw)
     preset_id: StringProperty(
         name="Preset ID",
         description="Role of the magnet in a preset (e.g. FRETBOARD_PLANE); mode switches find magnets by it")
-    hand: EnumProperty(name="Hand", items=SIDE_ITEMS, default='L')
+    hand: EnumProperty(name="Hand", items=SIDE_ITEMS, default='L', update=_redraw)
     kind: EnumProperty(
-        name="Kind", default='PLANE',
+        name="Kind", default='PLANE', update=_redraw,
         items=(('LINE', "Line", "Pull toward the segment from landmark A to landmark B"),
                ('PLANE', "Plane", "Pull toward, or clamp against, the plane through landmark A "
                                   "(normal: A's local Z)")))
-    landmark_a: PointerProperty(name="Landmark A", type=bpy.types.Object, poll=_is_empty)
-    landmark_b: PointerProperty(name="Landmark B", type=bpy.types.Object, poll=_is_empty,
+    landmark_a: PointerProperty(name="Landmark A", type=bpy.types.Object, poll=_is_empty, update=_redraw)
+    landmark_b: PointerProperty(name="Landmark B", type=bpy.types.Object, poll=_is_empty, update=_redraw,
                                 description="End of the segment (line magnets only)")
     crossable: BoolProperty(
-        name="Crossable", default=True,
+        name="Crossable", default=True, update=_redraw,
         description="Off: the plane is a barrier, and a hand behind it is clamped onto it with full weight")
     effective_distance_m: FloatProperty(
-        name="Distance (m)", default=0.27, min=0.0, soft_max=1.0, precision=4,
+        name="Distance (m)", default=0.27, min=0.0, soft_max=1.0, precision=4, update=_redraw,
         description="Reach of the magnet in metres, before arm-ratio scaling. Barriers need it too")
-    peak: FloatProperty(name="Peak (m)", default=0.0, min=0.0, precision=4,
+    peak: FloatProperty(name="Peak (m)", default=0.0, min=0.0, precision=4, update=_redraw,
                         description="Distance from the feature at which the weight is highest")
     power: FloatProperty(
-        name="Power", default=0.0, soft_min=-99.0, soft_max=1.0,
+        name="Power", default=0.0, soft_min=-99.0, soft_max=1.0, update=_redraw,
         description="0: linear falloff over the distance; 1: full snap within it; -9 or less: barrier "
                     "clamp only")
     use_default_rotation: BoolProperty(
-        name="Use Default Rotation", default=False,
+        name="Use Default Rotation", default=False, update=_redraw,
         description="Place the feature with the guitar's chest-mount rotation, before the neck aim")
     hand_offset_mode: EnumProperty(
-        name="Hand Offset", default='NONE',
+        name="Hand Offset", default='NONE', update=_redraw,
         items=(('PARENT_BONE', "Aim Offset", "The aim hand offset (SAO's \"parent_bone\" offset)"),
                ('CUSTOM', "Custom", "The offset vector below"),
                ('NONE', "None", "The wrist itself")))
     hand_offset: FloatVectorProperty(
-        name="Offset (m)", size=3, precision=4,
+        name="Offset (m)", size=3, precision=4, update=_redraw,
         description="Offset from the wrist in the rest-aligned hand frame, in metres")
     apply_axis_rot: BoolProperty(
-        name="Apply Axis Rotation", default=False,
+        name="Apply Axis Rotation", default=False, update=_redraw,
         description="Rotate the offset by axis_rot (SAO skips this for T-pose avatars)")
     fingertip_mode: EnumProperty(
-        name="Fingertips", default='NONE',
+        name="Fingertips", default='NONE', update=_redraw,
         items=(('NONE', "None", "The hand point itself meets the plane"),
                ('V2', "Fingertip v2", "Shift the hand so that the nearest fingertip lands on the plane")))
     fingers: EnumProperty(name="Fingers", items=FINGER_ITEMS, options={'ENUM_FLAG'},
-                          default={'INDEX', 'MIDDLE', 'RING'})
+                          default={'INDEX', 'MIDDLE', 'RING'}, update=_redraw)
     fingertip_offset_m: FloatProperty(
-        name="Fingertip Offset", default=0.0, precision=4,
+        name="Fingertip Offset", default=0.0, precision=4, update=_redraw,
         description="SAO's reference_point_offset_distance: shifts the plane along its normal for the fingertips. "
                     "In GTR_ROOT units, so it scales with the guitar (metres for a real-size guitar at scale 1)")
     push_only: BoolProperty(
-        name="Push Only", default=False,
+        name="Push Only", default=False, update=_redraw,
         description="The fingertips may push the hand away from the plane but never pull it in")
     filter: EnumProperty(
-        name="Filter", default='NONE',
+        name="Filter", default='NONE', update=_redraw,
         items=(('NONE', "None", ""),
                ('ONE_EURO', "One Euro", "One-euro filter on the pull"),
                ('ROTATION_BASED', "Rotation", "Filter the angle about the guitar root")))
     hysteresis: FloatProperty(
-        name="Hysteresis", default=1.15, min=1.0, soft_max=2.0,
+        name="Hysteresis", default=1.15, min=1.0, soft_max=2.0, update=_redraw,
         description="Distance multiplier while a snap magnet (power 1 or more) holds the hand")
 
 
@@ -283,6 +289,9 @@ class GTR_Settings(PropertyGroup):
     show_overlay: BoolProperty(name="Show Overlay", default=True, update=_redraw,
                                description="Draw the calibrated frames, fingertips, landmark lines and the mount "
                                            "in the viewport")
+    show_magnets: BoolProperty(name="Show Magnets", default=True, update=_redraw,
+                               description="Draw the magnets in the overlay, the active one with its reach, and "
+                                           "what they did in the solve the rig shows")
     preset: EnumProperty(name="Preset", items=_PRESET_ITEMS,
                          description="Instrument preset: landmarks, magnets, mount, aim and wrist settings")
 
@@ -299,7 +308,9 @@ class GTR_Settings(PropertyGroup):
     mount_preset: StringProperty(name="Mount Preset", description="Name of the preset the mount came from")
 
     # Mode and range (§5.8)
-    mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='FOLLOW')
+    mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='FOLLOW', update=_mode_changed,
+                       description="Switches the neck aim and the fretboard-edge magnet like SAO's Alt+A; the "
+                                   "fields stay editable")
     range_overrides: CollectionProperty(type=GTR_RangeOverride)
     active_range_index: IntProperty()
     handedness: EnumProperty(
@@ -338,18 +349,24 @@ class GTR_Settings(PropertyGroup):
     # Scaling (§5.1)
     autoscale_policy: EnumProperty(
         name="Auto-Scale", default='INDEX_JS',
-        items=(('INDEX_JS', "index.js", "Scale magnet hand offsets by the palm ratio, like the neck aim"),
-               ('MIN_JS', "min.js", "Leave magnet hand offsets unscaled, like SAO's VRM path in min.js"),
-               ('NONE', "None", "No auto-scaling")))
+        description="How lengths authored for SAO's reference avatar fit this character. Magnet distances scale "
+                    "with the arm, and the mount with the spine, except under None",
+        items=(('INDEX_JS', "index.js", "Magnet hand offsets scale with the palm, like the neck aim"),
+               ('MIN_JS', "min.js", "Magnet hand offsets scale with the arm, like SAO's arm-normalised magnet "
+                                    "space for VRM avatars"),
+               ('NONE', "None", "Nothing is scaled to the character")))
 
     # Reach (§5.5)
     reach_clamp: FloatProperty(name="Reach Clamp", default=0.995, min=0.5, max=1.0,
-                               description="Keep wrist targets within this share of the arm chain length")
+                               description="Keep wrist targets within this share of the arm chain length, or as "
+                                           "far as the mocap wrist if it is further")
     use_right_root_bias: BoolProperty(
         name="Right Root Bias", default=False,
-        description="Rotate the right wrist target about the shoulder, like SAO's root_rotation")
+        description="Turn the right arm before the IK, like SAO's root_rotation: this moves where the right "
+                    "elbow points")
     right_root_bias: FloatVectorProperty(name="Bias", size=3, subtype='EULER', default=SAO_RIGHT_ROOT_BIAS,
-                                         description="SAO: (0°, 10°, -15°), order ZYX in three.js")
+                                         description="In the rest-aligned upper-arm frame. SAO: (0°, 10°, -15°), "
+                                                     "order ZYX in three.js")
 
     # Magnets (§5.5)
     magnets: CollectionProperty(type=GTR_Magnet)
@@ -367,6 +384,17 @@ class GTR_Settings(PropertyGroup):
                                       description="Post-bake low-pass cutoff for the arm channels")
     smooth_cutoff_guitar: FloatProperty(name="Guitar Cutoff (Hz)", default=3.0, min=0.1,
                                         description="Post-bake low-pass cutoff for the guitar channels")
+
+    # Helper rig and Solve Frame (§4, §6)
+    rig_collection: PointerProperty(name="Rig Collection", type=bpy.types.Collection,
+                                    description="The GuitarRig collection that holds the helper empties")
+    rig_armature: PointerProperty(name="Rig Armature", type=bpy.types.Object,
+                                  description="The armature that carries the helper rig's constraints")
+    solve_active: BoolProperty(name="Showing a Solve",
+                               description="The rig's constraints are on and show the solve of Solve Frame")
+    solve_frame: IntProperty(name="Solved Frame", description="The frame whose solve the rig shows")
+    solve_serial: IntProperty(name="Solve Serial", description="Counts the solves, so that an undone solve is "
+                                                               "not shown as current")
 
 
 CLASSES = (

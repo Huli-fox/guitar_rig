@@ -343,3 +343,26 @@ def pose_arrays(obj, names=None):
     """{bone name: (1, 4, 4)} armature-space pose matrices."""
     names = names if names is not None else [pbone.name for pbone in obj.pose.bones]
     return {name: np.array(obj.pose.bones[name].matrix)[None] for name in names}
+
+
+def world_head(obj, name):
+    bpy.context.view_layer.update()
+    return (obj.matrix_world @ obj.pose.bones[name].matrix).translation
+
+
+def reach(obj, upper, forearm, hand, target, bend):
+    """Pose an arm by FK so that the head of `hand` is at the world point `target` (kept within 99.9 % of the
+    arm's reach), the elbow bending toward the world direction `bend`. Works through twist bones between
+    `upper` and `forearm`."""
+    shoulder, elbow, wrist = (world_head(obj, name) for name in (upper, forearm, hand))
+    l1, l2 = (elbow - shoulder).length, (wrist - elbow).length
+    direction = target - shoulder
+    distance = min(direction.length, 0.999 * (l1 + l2))
+    direction.normalize()
+    x = (l1 * l1 - l2 * l2 + distance * distance) / (2.0 * distance)
+    side = bend - direction * bend.dot(direction)
+    side.normalize()
+    new_elbow = shoulder + direction * x + side * math.sqrt(max(l1 * l1 - x * x, 0.0))
+    rotate_bone(obj, upper, (elbow - shoulder).rotation_difference(new_elbow - shoulder))
+    wrist = world_head(obj, hand)
+    rotate_bone(obj, forearm, (wrist - new_elbow).rotation_difference(shoulder + direction * distance - new_elbow))

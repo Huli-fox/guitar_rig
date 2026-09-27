@@ -10,6 +10,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Matrix, Vector
 
 from ..core import calibrate, guitar_frame, landmarks, mount, presets
+from ..core.magnets import apply_mode
 from .common import report, tag_redraw
 
 ROLE_ITEMS = tuple((role.id, role.label, role.description) for role in landmarks.ROLES)
@@ -273,6 +274,7 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
         messages.append(('WARNING', f"The preset has no {role.label} landmark: add it by hand."))
     if magnets:
         messages += presets.store_magnets(settings.magnets, preset.magnets, found, fitted)
+        apply_mode(settings, settings.mode)
         settings.active_magnet_index = 0
     if mount and preset.mount_t is not None:
         settings.mount_t = preset.mount_t

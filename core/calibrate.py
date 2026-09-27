@@ -212,7 +212,8 @@ def compute(arm_obj, mapping, *, flip=False, ref_angle=0.0, metres_per_bu=1.0):
         palm_len = metres(hand['L'].head_local, middle.head_local)
     else:
         palm_len = metres(hand['L'].head_local, hand['L'].tail_local)
-        messages.append(('WARNING', "No left middle-finger proximal bone: the palm length is taken from the hand bone."))
+        messages.append(('WARNING', "No left middle-finger proximal bone: the palm length is taken from the hand "
+                                    "bone."))
 
     neck = bone("neck", False)
     if neck is None:

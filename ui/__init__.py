@@ -1,8 +1,8 @@
-"""User interface: sidebar panels and the viewport overlay."""
+"""User interface: sidebar panels, lists and the viewport overlay."""
 
-from . import overlay, panels
+from . import lists, overlay, panels
 
-_MODULES = (panels, overlay)
+_MODULES = (lists, panels, overlay)
 
 
 def register():

@@ -2,8 +2,8 @@
 
 import bpy
 
-from ..core import bonemap, calibrate, mount
-from .common import tag_redraw
+from ..core import mount
+from .common import calibration_stale, tag_redraw
 
 
 def _mount_inputs(context):
@@ -18,14 +18,6 @@ def _mount_inputs(context):
     if not cal.is_valid:
         raise mount.MountError("Calibrate the character first.")
     return obj, cal, obj.gtr_char.bone_map.chest, root
-
-
-def _stale(context, obj):
-    cal = obj.gtr_char.calibration
-    mapping = bonemap.mapping_from(obj.gtr_char.bone_map)
-    current = calibrate.fingerprint(obj, mapping, cal.flip_facing, cal.axis_rot_ref_angle,
-                                    context.scene.unit_settings.scale_length)
-    return current != cal.fingerprint
 
 
 def _poll(cls, context, need_mount):
@@ -69,7 +61,7 @@ class GTR_OT_place_on_mount(bpy.types.Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
         root.matrix_world = matrix
-        if _stale(context, obj):
+        if calibration_stale(context, obj):
             self.report({'WARNING'}, "The rig or bone map changed since calibration: calibrate again.")
         animation = root.animation_data
         if animation is not None and (animation.action is not None or animation.nla_tracks):
@@ -107,7 +99,7 @@ class GTR_OT_capture_mount(bpy.types.Operator):
         settings.mount_source = 'CAPTURE'
         settings.mount_frame = context.scene.frame_current
         settings.mount_preset = ""
-        if _stale(context, obj):
+        if calibration_stale(context, obj):
             self.report({'WARNING'}, "The rig or bone map changed since calibration: calibrate again, then capture "
                                      "the mount again.")
         self.report({'INFO'}, f"Mount captured at frame {settings.mount_frame}: the guitar origin is "
