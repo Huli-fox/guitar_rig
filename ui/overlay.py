@@ -12,8 +12,9 @@ Magnets are drawn in their hand's colour (left: blue, right: orange): lines as l
 a normal, barrier planes crossed. The active magnet also shows its reach D on this character: a cylinder
 around a line, a bar along the normal of a plane. While the rig shows a solve, a white line runs from each FK
 wrist to its target, and each magnet that saw the hand draws its pull, from grey (weight 0) to full colour
-(weight 1), red for a barrier clamp, with the weights as text. The geometry is built without the gpu module, so
-tests can check it in background mode.
+(weight 1), red for a barrier clamp, with the weights as text, and in FOLLOW a magenta line runs from the neck
+pivot to the aim point the neck was swung toward. The geometry is built without the gpu module, so tests can
+check it in background mode.
 """
 
 import math
@@ -25,8 +26,7 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, calibrate, landmarks, magnets, mount, solver
-from ..core.mathx import auto_scale
+from ..core import aim, bonemap, calibrate, landmarks, magnets, mount, solver
 
 AXIS_COLORS = ((0.95, 0.25, 0.25, 1.0), (0.35, 0.9, 0.3, 1.0), (0.3, 0.5, 1.0, 1.0))
 TIP_COLORS = {'TAIL': (1.0, 0.85, 0.2, 1.0), 'ESTIMATE': (1.0, 0.5, 0.1, 1.0)}
@@ -60,10 +60,8 @@ def rest_aligned_world(arm_obj, pbone, char_frame):
 def aim_point(arm_obj, settings, cal, hand):
     """World position of the §5.4 aim target on the left `hand` pose bone."""
     head, frame = rest_aligned_world(arm_obj, hand, Quaternion(cal.char_frame))
-    offset = Vector(settings.aim_hand_offset)
-    if settings.autoscale_policy != 'NONE':
-        offset = auto_scale(offset, cal.ratio_palm, 1.0)
-    return head + frame @ (Quaternion(cal.axis_rot_L) @ offset) / cal.metres_per_bu
+    scale = aim.offset_scale(settings.autoscale_policy, cal.ratio_palm) / cal.metres_per_bu
+    return aim.target_point(head, frame, settings.aim_hand_offset, scale, Quaternion(cal.axis_rot_L))
 
 
 class _Geometry:
@@ -232,6 +230,9 @@ def _magnets(geo, context, settings, unit):
                 geo.square(end, u, v, TICK_HALF * unit, color)
     if result is None:
         return
+    if result.neck is not None:
+        geo.line(result.neck.axis_origin, result.neck.target, AIM_COLOR)
+        geo.dot(result.neck.axis_origin, AIM_COLOR)
     for side, side_result in result.sides.items():
         geo.line(side_result.fk_wrist, side_result.target, WRIST_COLOR)
         geo.dot(side_result.fk_wrist, IDLE_COLOR)

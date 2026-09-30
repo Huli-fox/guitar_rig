@@ -1,4 +1,3 @@
-import math
 import unittest
 from types import SimpleNamespace
 
@@ -7,7 +6,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 import guitars
 import rigs
-from guitar_rig.core import calibrate, landmarks, magnets, solver
+from guitar_rig.core import landmarks, magnets, solver
 from guitar_rig.rig import build
 from guitar_rig.ui import overlay, panels
 from test_addon import FakeLayout
@@ -16,13 +15,13 @@ from test_guitar import normalize, reset_scene
 TOLERANCE = 2e-5            # metres: the IK reaches its goal to about 1e-7 m, float32 adds the rest
 
 
-def setup_scene(unit=1.0):
-    """A VRoid character and the synthetic guitar with the acoustic preset, the rig built. `unit`: scene units per
-    metre (100 for a centimetre scene). Returns the armature and GTR_ROOT."""
+def setup_scene(unit=1.0, build_rig=None):
+    """A character (VRoid, or `build_rig()`) and the synthetic guitar with the acoustic preset, the rig built.
+    `unit`: scene units per metre (100 for a centimetre scene). Returns the armature and GTR_ROOT."""
     reset_scene()
     scene = bpy.context.scene
     scene.unit_settings.scale_length = 1.0 / unit
-    obj = rigs.vroid(unit=unit)
+    obj = rigs.vroid(unit=unit) if build_rig is None else build_rig()
     bpy.context.view_layer.objects.active = obj
     assert bpy.ops.gtr.auto_map_bones() == {'FINISHED'}
     assert bpy.ops.gtr.calibrate() == {'FINISHED'}
@@ -32,6 +31,14 @@ def setup_scene(unit=1.0):
     bpy.context.view_layer.objects.active = obj
     assert bpy.ops.gtr.build_rig() == {'FINISHED'}
     return obj, root
+
+
+def magnets_only(settings):
+    """Leave only the M2 magnet geometry: no neck aim, no wrist blend and no fingertips."""
+    settings.aim_enabled = False
+    settings.wrist_blend = 0.0
+    for item in settings.magnets:
+        item.fingertip_mode = 'NONE'
 
 
 def mounted_landmarks(root):
@@ -53,14 +60,15 @@ def chain(obj, side):
 
 def palm_point(obj):
     """The fretboard magnets' hand point on the left hand in the current pose: the wrist plus their PARENT_BONE
-    offset (the aim hand offset) without the axis rotation, which the preset leaves off for them. This is not
-    overlay.aim_point, which turns the offset by axis_rot_L."""
+    offset (the aim hand offset), turned by axis_rot_L when the magnet applies it."""
     settings = bpy.context.scene.gtr
     cal = obj.gtr_char.calibration
     hand = obj.pose.bones[obj.gtr_char.bone_map.chain_hand_L]
     head, frame = overlay.rest_aligned_world(obj, hand, Quaternion(cal.char_frame))
     scale = magnets.offset_scale(settings.autoscale_policy, cal.ratio_arm, cal.ratio_palm) / cal.metres_per_bu
-    return head + magnets.hand_offset(settings.aim_hand_offset, frame, scale)
+    item = next(m for m in settings.magnets if m.preset_id == "FRETBOARD_PLANE")
+    axis_rot = Quaternion(cal.axis_rot_L) if item.apply_axis_rot else None
+    return head + magnets.hand_offset(settings.aim_hand_offset, frame, scale, axis_rot)
 
 
 def wrist(obj, side):
@@ -68,23 +76,27 @@ def wrist(obj, side):
     return rigs.world_head(obj, chain(obj, side)[2])
 
 
+def pose_left(obj, root, offset_fret, offset_edge, along=0.25):
+    """Pose the left arm so that its wrist is `along` metres up the neck from the neck pivot, off the edge line
+    by the given amounts (metres) along the fretboard and edge normals. Returns the landmarks on the mounted guitar
+    ({role: (point, normal)}), the neck pivot and the direction of the edge line."""
+    found = mounted_landmarks(root)
+    unit = 1.0 / bpy.context.scene.unit_settings.scale_length
+    pivot, fret = found["FRETBOARD_PLANE"]
+    _, edge = found["FRETBOARD_EDGE"]
+    direction = fret.cross(edge).normalized()
+    if direction.dot(found["NUT"][0] - pivot) < 0.0:
+        direction.negate()
+    target = pivot + (direction * along + fret * offset_fret + edge * offset_edge) * unit
+    rigs.reach(obj, *chain(obj, 'L'), target, Vector((0.0, 0.5, -1.0)))
+    return found, pivot, direction
+
+
 class FretboardTest(unittest.TestCase):
     """The fretting hand against the acoustic preset's fretboard magnets (SAO magnets 3, 4 and 5)."""
 
     def pose_left(self, obj, root, offset_fret, offset_edge, along=0.25):
-        """Pose the left arm so that its wrist is `along` metres up the neck from the neck pivot, off the edge line
-        by the given amounts (metres) along the fretboard and edge normals. Returns the landmarks and the line."""
-        found = mounted_landmarks(root)
-        unit = 1.0 / bpy.context.scene.unit_settings.scale_length
-        pivot, fret = found["FRETBOARD_PLANE"]
-        _, edge = found["FRETBOARD_EDGE"]
-        direction = fret.cross(edge).normalized()
-        if direction.dot(found["NUT"][0] - pivot) < 0.0:
-            direction.negate()
-        target = pivot + (direction * along + fret * offset_fret + edge * offset_edge) * unit
-        down_back = Vector((0.0, 0.5, -1.0))
-        rigs.reach(obj, *chain(obj, 'L'), target, down_back)
-        return found, pivot, direction
+        return pose_left(obj, root, offset_fret, offset_edge, along)
 
     def expected_on_line(self, point, pivot, direction):
         return pivot + direction * (point - pivot).dot(direction)
@@ -101,6 +113,7 @@ class FretboardTest(unittest.TestCase):
         obj, root = setup_scene(unit)
         settings = bpy.context.scene.gtr
         settings.mode = 'ALIGN'
+        magnets_only(settings)
         found, pivot, direction = self.pose_left(obj, root, 0.04, 0.03)
         mounted = root.matrix_world.copy()
         before = palm_point(obj)
@@ -132,6 +145,7 @@ class FretboardTest(unittest.TestCase):
         obj, root = setup_scene()
         settings = bpy.context.scene.gtr
         self.assertEqual(settings.mode, 'FOLLOW')
+        magnets_only(settings)
         # Below the edge plane: clamped onto it, like ALIGN.
         found, pivot, direction = self.pose_left(obj, root, 0.04, -0.12)
         before = palm_point(obj)
@@ -154,6 +168,7 @@ class FretboardTest(unittest.TestCase):
         """A wrist on the body side of the neck/body barrier is put on the barrier plane."""
         obj, root = setup_scene()
         bpy.context.scene.gtr.mode = 'ALIGN'
+        magnets_only(bpy.context.scene.gtr)
         found, _, _ = self.pose_left(obj, root, 0.03, 0.02, along=0.0)
         barrier, normal = found["NECK_BODY_BARRIER"]
         self.assertLess((wrist(obj, 'L') - barrier).dot(normal), -0.05)
@@ -179,6 +194,7 @@ class FretboardTest(unittest.TestCase):
         bpy.context.view_layer.objects.active = obj
         assert bpy.ops.gtr.build_rig() == {'FINISHED'}
         bpy.context.scene.gtr.mode = 'ALIGN'
+        magnets_only(bpy.context.scene.gtr)
         found, pivot, direction = self.pose_left(obj, root, 0.04, 0.03)
         before = palm_point(obj)
         assert bpy.ops.gtr.solve_frame() == {'FINISHED'}
@@ -195,6 +211,7 @@ class StrumTest(unittest.TestCase):
     def test_right_hand(self):
         obj, root = setup_scene()
         settings = bpy.context.scene.gtr
+        magnets_only(settings)
         found = mounted_landmarks(root)
         a, b = found["STRUM_A"][0], found["STRUM_B"][0]
         string_point, string_normal = found["STRING_PLANE"]
@@ -226,6 +243,7 @@ class StrumTest(unittest.TestCase):
     def test_string_barrier_at_any_distance(self):
         obj, root = setup_scene()
         settings = bpy.context.scene.gtr
+        magnets_only(settings)
         found = mounted_landmarks(root)
         string_point, string_normal = found["STRING_PLANE"]
         for item in settings.magnets:
@@ -249,7 +267,9 @@ class SolveTest(unittest.TestCase):
         self.settings = bpy.context.scene.gtr
 
     def test_no_magnets_keep_the_mocap(self):
-        """With every magnet off, the solved arms are the FK arms, bone for bone."""
+        """With every magnet and the wrist blend off, the solved arms are the FK arms, bone for bone, though the
+        neck is aimed."""
+        self.settings.wrist_blend = 0.0
         for item in self.settings.magnets:
             item.enabled = False
         mapping = self.obj.gtr_char.bone_map

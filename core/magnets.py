@@ -18,6 +18,16 @@ One magnet acts on a hand point P = F + e (F the wrist):
 - a peak moves the pull target off the feature by `peak`, toward P;
 - P += w (target - P), and the wrist is P - e again.
 Magnets act in list order, each on the wrist the ones before it left.
+
+Fingertip v2 (plane magnets; min.js offset_fingertip[_v2], which SAO's v1 shares) shifts the hand along the
+normal so that its lowest chosen fingertip, less a margin (the fingertip offset plus the palm margin), is level
+with P: with v the signed distance of P and best the lowest fingertip's minus the margin, the wrist also moves by
+-N (best - v). Push-only caps best at v, so the shift only ever moves the hand away from the plane. The weight
+and the barrier test still see P, and SAO shifts the hand whatever the weight, as this port does. So a snap puts
+the lowest fingertip `margin` above the plane; a push-only barrier puts it `margin` above the plane from behind,
+and from in front leaves it no lower than P's own height plus the margin: a hand whose fingertips hang lower than
+that toward the plane is lifted, however far from the plane it is. On a hand without finger bones the solver
+passes P itself as the only fingertip, with the palm margin alone.
 """
 
 from dataclasses import dataclass
@@ -119,6 +129,8 @@ class Hit:
     weight: float               # w
     barrier: bool               # clamped behind a plane that is not crossable
     moved: Vector               # displacement of the hand point
+    shift: float = 0.0          # the fingertip move along the plane normal (SAO's E = best - v): -N·shift
+    tip: Vector = None          # the lowest fingertip before the pull (fingertip v2)
 
     @property
     def holds(self):
@@ -153,8 +165,13 @@ def falloff(d, reach, peak=0.0, power=0.0):
     return min(max(w, 0.0), 1.0)
 
 
-def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True):
-    """(new hand point, Hit) after one magnet. `holding`: the magnet held this hand on the previous frame."""
+def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True, tips=None, margin=0.0,
+         push_only=False):
+    """(new hand point, Hit) after one magnet. `holding`: the magnet held this hand on the previous frame.
+
+    `tips`: world fingertip points for fingertip v2 (plane magnets), with its `margin` and `push_only` (see the
+    module notes).
+    """
     n, d, s = nearest_point(feature, point)
     reach = params.reach
     if holding and params.power >= SNAP_POWER:
@@ -169,17 +186,35 @@ def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True
         if params.peak > 0.0 and w > 0.0 and d > 1e-12:
             target = n + (point - n) * (params.peak / d)
     moved = (target - point) * w
-    return point + moved, Hit(point.copy(), n, target, d, reach, w, barrier, moved)
+    shift, nearest = 0.0, None
+    if tips and feature.kind == 'PLANE':
+        heights = [(tip - feature.a).dot(feature.normal) for tip in tips]
+        low = min(range(len(tips)), key=heights.__getitem__)
+        best = heights[low] - margin
+        if push_only:
+            best = min(best, s)
+        shift, nearest = best - s, tips[low].copy()
+        moved = moved - feature.normal * shift
+    return point + moved, Hit(point.copy(), n, target, d, reach, w, barrier, moved, shift, nearest)
+
+
+@dataclass
+class Fingertips:
+    """Fingertip v2 settings of a magnet on one hand, in world units."""
+    vectors: list               # world vectors from the wrist to each chosen fingertip
+    margin: float               # fingertip offset plus palm margin
+    push_only: bool = False
 
 
 @dataclass
 class Entry:
-    """One magnet ready to act on a wrist: its list index, world feature, world settings and the world vector
-    from the wrist to its hand point."""
+    """One magnet ready to act on a wrist: its list index, world feature, world settings, the world vector
+    from the wrist to its hand point, and its fingertips (or None)."""
     index: int
     feature: Feature
     params: Params
     offset: Vector
+    fingertips: Fingertips = None
 
 
 def apply(wrist, entries, *, barriers_ignore_distance=True, holding=frozenset()):
@@ -187,8 +222,12 @@ def apply(wrist, entries, *, barriers_ignore_distance=True, holding=frozenset())
     that held this hand on the previous frame."""
     hits = []
     for entry in entries:
+        tips = entry.fingertips
         point, hit = pull(wrist + entry.offset, entry.feature, entry.params, holding=entry.index in holding,
-                          barriers_ignore_distance=barriers_ignore_distance)
+                          barriers_ignore_distance=barriers_ignore_distance,
+                          tips=[wrist + v for v in tips.vectors] if tips is not None else None,
+                          margin=tips.margin if tips is not None else 0.0,
+                          push_only=tips is not None and tips.push_only)
         wrist = point - entry.offset
         hits.append((entry.index, hit))
     return wrist, hits

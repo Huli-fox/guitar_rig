@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "name": "Acoustic Guitar",
   "description": "XR Animator's acoustic guitar scene (guitar_collection_v9.1/scene.json)",
   "source": "guitar_collection_v9.1/scene.json and props/acoustic_guitar/acoustic_guitar.glb",
@@ -7,7 +7,7 @@
   "notes": [
     "Positions are SAO's, in GLB units of the acoustic_guitar prop; placement.scale 0.088 makes 1 unit 0.008 m.",
     "The mount is only a starting guess: pose the guitar on the character and use Capture Mount.",
-    "Magnet 3 uses SAO's offset_fingertip (v1); it is mapped to fingertip v2 without push-only.",
+    "Magnet 3 uses SAO's offset_fingertip (v1), which min.js runs through the same code as v2: it is fingertip v2 without push-only.",
     "mocap_factor settings are ignored: they only matter for external VMC input."
   ],
   "sao_placement_scale": 0.088,

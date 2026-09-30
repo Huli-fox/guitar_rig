@@ -12,6 +12,11 @@ them onto the same measurements of the user's guitar (see `fit`).
 The preset origin is the point the guitar swings about when the neck is aimed, and the point the mount
 places. For SAO presets it is the GLB origin; `fit` puts GTR_ROOT at the corresponding point of the user's
 guitar.
+
+Format 2 (M3) changed two things that files saved in format 1 still carry: a saved wrist `rotation` was SAO's
+offset for its hand-tracking frame, and is now for the hand's T-pose-aligned frame (wrist.py); and magnets saved
+`apply_axis_rot` off, the old default, where hand offsets now follow axis_rot like the neck aim. Format 1 files
+are converted on loading.
 """
 
 import json
@@ -23,12 +28,13 @@ import numpy as np
 from mathutils import Euler, Quaternion, Vector
 
 from .guitar_frame import Measurements
+from .wrist import HAND_FRAME
 
 PRESET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "presets")
 NON_PRESET_FILES = frozenset({"bone_maps.json"})
 SAO_UNITS_PER_M = 11.0      # 1 MMD unit = 1/11 m
 FIT_WARN_RANGE = (0.5, 2.0)  # per-axis fit scales outside this range get a warning
-FORMAT = 1
+FORMAT = 2
 
 
 class PresetError(ValueError):
@@ -77,6 +83,14 @@ def sao_mount(position, rotation_deg):
 def sao_euler_xyz(rotation_deg):
     """An SAO rotation offset in degrees: three.js order 'XYZ' is the matrix Rx·Ry·Rz, Blender's order 'ZYX'."""
     return Euler([math.radians(v) for v in rotation_deg], 'ZYX').to_quaternion()
+
+
+def sao_wrist(rotation_deg, side='L'):
+    """An SAO rotation_reference offset as a wrist offset: the hand's T-pose-aligned frame in the guitar frame.
+
+    SAO's offset is for its hand-tracking frame; the T-pose-aligned hand frame is that frame times w (wrist.py).
+    """
+    return (sao_euler_xyz(rotation_deg) @ HAND_FRAME[side]).normalized()
 
 
 # Loading -------------------------------------------------------------------------------------------------------
@@ -147,7 +161,8 @@ MAGNET_PROPS = {"peak_m": "peak", "hand_offset_m": "hand_offset"}  # GTR_Magnet 
 
 
 def parse(data, preset_id=""):
-    if data.get("format", FORMAT) > FORMAT:
+    version = data.get("format", FORMAT)
+    if version > FORMAT:
         raise ValueError(f"format {data['format']} is newer than this add-on reads ({FORMAT})")
     unit = _unit(data)
     frame = Quaternion(data.get("frame", (1.0, 0.0, 0.0, 0.0))).normalized()
@@ -160,6 +175,8 @@ def parse(data, preset_id=""):
     magnets = []
     for entry in data.get("magnets", []):
         magnet = {key: value for key, value in entry.items() if key not in {"sao_index", "note"}}
+        if version < 2:
+            magnet.pop("apply_axis_rot", None)
         for key, space in MAGNET_LENGTHS:
             raw = magnet.pop(key, None)
             if raw is None or key + "_m" in magnet:
@@ -190,7 +207,12 @@ def parse(data, preset_id=""):
     wrist_offset = wrist_blend = None
     wrist = data.get("wrist")
     if wrist:
-        rotation = sao_euler_xyz(wrist["sao_offset"]) if "sao_offset" in wrist else Quaternion(wrist["rotation"])
+        if "sao_offset" in wrist:
+            rotation = sao_wrist(wrist["sao_offset"])
+        else:
+            rotation = Quaternion(wrist["rotation"])
+            if version < 2:
+                rotation = rotation @ HAND_FRAME['L']
         wrist_offset = (frame @ rotation).normalized()      # hand frame -> preset axes -> guitar frame
         wrist_blend = wrist.get("weight")
 

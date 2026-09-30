@@ -7,7 +7,7 @@ import bpy
 import numpy as np
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 from ..core import calibrate, guitar_frame, landmarks, mount, presets
 from ..core.magnets import apply_mode
@@ -72,11 +72,16 @@ def set_root_matrix(root, matrix):
 
 
 def move_root(context, root, matrix):
-    """set_root_matrix, keeping a captured mount on the guitar (see mount.rebase)."""
+    """set_root_matrix, keeping a captured mount and a captured wrist offset on the guitar (see mount.rebase)."""
     old = root.matrix_world.copy()
     set_root_matrix(root, matrix)
     settings = context.scene.gtr
-    if settings.mount_source != 'CAPTURE' or root is not settings.guitar_root:
+    if root is not settings.guitar_root:
+        return
+    if settings.wrist_source == 'CAPTURE':
+        turn = matrix.decompose()[1].inverted() @ old.decompose()[1]
+        settings.wrist_offset = (turn @ Quaternion(settings.wrist_offset)).normalized()
+    if settings.mount_source != 'CAPTURE':
         return
     obj = settings.armature
     cal = obj.gtr_char.calibration if obj is not None else None
@@ -288,6 +293,7 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
             settings.aim_hand_offset = preset.aim_hand_offset
         if preset.wrist_offset is not None:
             settings.wrist_offset = preset.wrist_offset
+            settings.wrist_source = 'PRESET'
         if preset.wrist_blend is not None:
             settings.wrist_blend = preset.wrist_blend
     if not preset.verified:
@@ -304,11 +310,14 @@ class _LoadPresetOptions:
     mount: BoolProperty(name="Mount", default=True,
                         description="Replace the mount with the preset's estimate (off when the mount was captured)")
     aim_wrist: BoolProperty(name="Aim and Wrist", default=True,
-                            description="Use the preset's aim hand offset and wrist rotation")
+                            description="Use the preset's aim hand offset and wrist rotation (off when the wrist "
+                                        "offset was captured)")
 
     def _set_defaults(self, context):
         if not self.properties.is_property_set("mount"):
             self.mount = context.scene.gtr.mount_source != 'CAPTURE'
+        if not self.properties.is_property_set("aim_wrist"):
+            self.aim_wrist = context.scene.gtr.wrist_source != 'CAPTURE'
 
     def _apply(self, context, source):
         try:

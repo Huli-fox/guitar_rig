@@ -1,26 +1,38 @@
-"""Per-frame solve (§7): the guitar on its chest mount, the magnets and the reach clamp on both wrist targets,
-then Blender's IK through the helper rig (rig/build.py).
+"""Per-frame solve (§7): the guitar on its chest mount, aimed at the fretting hand; the wrist blend on the fretting
+hand; the magnets, fingertips and reach clamp on both wrist targets; Blender's IK through the helper rig
+(rig/build.py).
 
-The FK pose is read with the rig's constraints at influence 0, and the magnets always start from it, so nothing
-drifts. The guitar stays on its mount in both modes for now; the modes differ only in their magnet settings
-(magnets.MODE_PRESETS), so the magnets give the wrist targets in one pass. The iterations then only refine the IK
-goal: the IK puts the IK forearm's tail on its goal, and where a rig's hand does not start at that tail, the goal
-is corrected by the hand offset turned with the solved forearm. On connected arms the first iteration is exact.
+The FK pose is read with the rig's constraints at influence 0, and every pass starts from it, so nothing drifts.
+A pass, with the guitar at rotation q (the mount rotation at first):
+  1. the fretting wrist's rotation is blended toward the guitar (wrist.py); the other hand keeps its FK rotation;
+  2. the magnets move each wrist target, with hand offsets and fingertips turned by the solved hand;
+  3. the IK puts the arms there (one depsgraph update);
+  4. in FOLLOW, the neck is aimed at the solved fretting hand from the mount rotation (aim.py), and q moves
+     `relax` of the way to it.
+SAO runs this loop once per frame and feeds the result into the next; offline it repeats until the aim and the
+wrists settle, with at most `iterations` aims and one pass after the last, so the hands always match the guitar
+they were solved for. The passes also refine the IK goal: the IK puts the IK forearm's tail on its goal, and
+where a rig's hand does not start at that tail, the goal is corrected by the hand offset turned with the solved
+forearm.
 
-The hands keep their FK world rotation: the wrist empties copy it. The last result, with what each magnet did,
-is kept for the overlay and the panels while the rig shows it, which is until the frame changes.
+The last result, with what each magnet did, is kept for the overlay and the panels while the rig shows it, which
+is until the frame changes.
 """
 
+import math
 from dataclasses import dataclass, field
 
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import calibrate, ik, landmarks, magnets, mount
+from . import aim, calibrate, ik, landmarks, magnets, mount, wrist
 from .bonemap import SIDES
+from .mathx import rotation_angle
 
 TOLERANCE_M = 1e-4          # a wrist this close to its target, in metres, has converged
+TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than this has converged
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
 SIDE_NAMES = {'L': "left", 'R': "right"}
+FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
 
 _results = {}               # scene session_uid -> FrameResult of the last solve
 
@@ -41,6 +53,8 @@ class Arm:
     forearm: Quaternion         # IK forearm world rotation
     hand: Quaternion            # IK hand world rotation
     hand_frame: Quaternion      # rest-aligned hand frame Q_hand
+    hand_offset: Quaternion     # hand world rotation @ this = its rest-aligned frame
+    tips: dict = field(default_factory=dict)    # finger ('INDEX', ...) -> world vector from the wrist to its tip
 
     @property
     def length(self):
@@ -48,20 +62,27 @@ class Arm:
         return (self.elbow - self.shoulder).length + (self.wrist - self.elbow).length
 
 
-def sample_arm(obj, chain, char_frame, pole_angle):
-    """The arm of `chain` (rig/build.py) in the armature's current evaluated pose."""
+def sample_arm(obj, chain, char_frame, pole_angle, fingertips=()):
+    """The arm of `chain` (rig/build.py) in the armature's current evaluated pose. `fingertips` are the
+    calibrate.Fingertip entries of this side: re-sampled from the current finger pose, as SAO does each frame."""
     mw = obj.matrix_world
     pose = obj.pose.bones
     root, forearm, hand = pose[chain.upper], pose[chain.forearm], pose[chain.hand]
     root_world, forearm_world, hand_world = mw @ root.matrix, mw @ forearm.matrix, mw @ hand.matrix
     axes = root_world.to_3x3().normalized()
     root_rotation, hand_rotation = root_world.to_quaternion(), hand_world.to_quaternion()
+    hand_offset = calibrate.rest_aligned_offset(hand.bone, char_frame)
+    tips = {}
+    for tip in fingertips:
+        distal = pose.get(tip.bone)
+        if distal is not None:
+            tips[tip.finger.upper()] = mw @ (distal.matrix @ Vector(tip.tip_local)) - hand_world.translation
     return Arm(
         shoulder=root_world.translation, elbow=forearm_world.translation, tip=mw @ forearm.tail,
         wrist=hand_world.translation, up=ik.up_axis(axes.col[0], axes.col[2], pole_angle),
         upper_frame=calibrate.rest_aligned(root_rotation, calibrate.rest_aligned_offset(root.bone, char_frame)),
         forearm=forearm_world.to_quaternion(), hand=hand_rotation,
-        hand_frame=calibrate.rest_aligned(hand_rotation, calibrate.rest_aligned_offset(hand.bone, char_frame)),
+        hand_frame=calibrate.rest_aligned(hand_rotation, hand_offset), hand_offset=hand_offset, tips=tips,
     )
 
 
@@ -103,10 +124,14 @@ def reach_scale(settings, cal):
     return magnets.distance_scale(settings.autoscale_policy, cal.ratio_arm) / cal.metres_per_bu
 
 
-def magnet_entries(settings, cal, side, arm, guitar, shapes):
-    """The magnets of `side` as magnets.Entry, in scene units, for the guitar placed at `guitar`."""
+def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None):
+    """The magnets of `side` as magnets.Entry, in scene units, for the guitar placed at `guitar`. `hand` is the
+    hand's solved world rotation (default: FK): hand offsets and fingertips turn with it."""
     distance = reach_scale(settings, cal)
     offset_scale = magnets.offset_scale(settings.autoscale_policy, cal.ratio_arm, cal.ratio_palm) / cal.metres_per_bu
+    hand = arm.hand if hand is None else hand
+    hand_frame = hand @ arm.hand_offset
+    turn = hand @ arm.hand.inverted()
     entries = []
     for index, item in enumerate(settings.magnets):
         shape = shapes.get(index)
@@ -117,9 +142,19 @@ def magnet_entries(settings, cal, side, arm, guitar, shapes):
         offset = Vector()
         if item.hand_offset_mode != 'NONE':
             local = settings.aim_hand_offset if item.hand_offset_mode == 'PARENT_BONE' else item.hand_offset
-            offset = magnets.hand_offset(local, arm.hand_frame, offset_scale,
+            offset = magnets.hand_offset(local, hand_frame, offset_scale,
                                          cal.axis_rot[side] if item.apply_axis_rot else None)
-        entries.append(magnets.Entry(index, shape.world(guitar, item.use_default_rotation), params, offset))
+        fingertips = None
+        if item.kind == 'PLANE' and item.fingertip_mode == 'V2':
+            vectors = [turn @ arm.tips[finger] for finger in sorted(item.fingers) if finger in arm.tips]
+            margin = settings.palm_margin_m * distance
+            if vectors:
+                margin += item.fingertip_offset_m * guitar.scale[0]
+            else:
+                vectors = [offset]      # no finger bones: the hand point itself keeps the palm margin (§13)
+            fingertips = magnets.Fingertips(vectors, margin, item.push_only)
+        entries.append(magnets.Entry(index, shape.world(guitar, item.use_default_rotation), params, offset,
+                                     fingertips))
     return entries
 
 
@@ -156,10 +191,18 @@ class FrameResult:
     mode: str
     guitar: magnets.GuitarPose
     sides: dict                 # side -> SideResult
-    iterations: int
+    iterations: int             # passes: wrists, magnets and IK, one depsgraph update each
     converged: bool
     metres_per_bu: float
     messages: list = field(default_factory=list)
+    neck: aim.Aim = None        # the last neck aim (FOLLOW), or None
+    wrist_turn: float = 0.0     # radians the fretting wrist turned away from the mocap
+    wrist_constrained: bool = False     # the wrist yaw was turned the constrained way
+
+    @property
+    def swing(self):
+        """Angle between the mount rotation and the solved guitar rotation, in radians."""
+        return rotation_angle(self.guitar.rotation, self.guitar.default_rotation)
 
     def hit(self, index):
         """The magnets.Hit of magnet `index`, or None if it did not act."""
@@ -190,6 +233,10 @@ def summary(result, items):
                   for i, hit in side_result.hits if hit.weight > 0.0 and i < len(items)]
         text = f"{SIDE_NAMES[side]} wrist moved {moved:.1f} cm"
         parts.append(text + (f" ({', '.join(acting)})" if acting else ""))
+    if result.neck is not None:
+        parts.append(f"neck swung {math.degrees(result.swing):.1f}°")
+    if result.wrist_turn > 0.0:
+        parts.append(f"{SIDE_NAMES[FRET_SIDE]} wrist turned {math.degrees(result.wrist_turn):.1f}°")
     return f"Frame {result.frame}: " + "; ".join(parts) + "."
 
 
@@ -206,8 +253,36 @@ def sample_arms(context, rig, cal):
     """The FK pose of both arms: the rig's constraints are switched off and the scene is evaluated."""
     rig.set_active(False)
     context.view_layer.update()
-    return {side: sample_arm(rig.armature, rig.chains[side], cal.char_frame, rig.ik[side].pole_angle)
+    return {side: sample_arm(rig.armature, rig.chains[side], cal.char_frame, rig.ik[side].pole_angle,
+                             [tip for tip in cal.fingertips if tip.side == side])
             for side in SIDES}
+
+
+def aim_axis(root):
+    """(NECK_PIVOT, NUT) in GTR_ROOT space, or None if either landmark is missing."""
+    found = landmarks.find(root)
+    if "NECK_PIVOT" not in found or "NUT" not in found:
+        return None
+    return landmarks.local_position(root, found["NECK_PIVOT"]), landmarks.local_position(root, found["NUT"])
+
+
+def aim_axis_shift(settings, shapes, hits, scale):
+    """How far the fretting hand's fingertip magnets move the aimed neck axis, in GTR_ROOT space (aim.py). The
+    last one in list order wins, as in SAO."""
+    shift = Vector()
+    for index, hit in hits:
+        item = settings.magnets[index]
+        if item.kind == 'PLANE' and item.fingertip_mode == 'V2' and hit.tip is not None:
+            shift = aim.aim_shift(shapes[index].normal, -hit.shift * hit.weight, scale)
+    return shift
+
+
+def aim_target(obj, chain, arm, settings, cal):
+    """The aim point on the solved fretting hand (world)."""
+    hand = obj.matrix_world @ obj.pose.bones[chain.hand].matrix
+    frame = hand.to_quaternion() @ arm.hand_offset
+    scale = aim.offset_scale(settings.autoscale_policy, cal.ratio_palm) / cal.metres_per_bu
+    return aim.target_point(hand.translation, frame, settings.aim_hand_offset, scale, cal.axis_rot[FRET_SIDE])
 
 
 def place_goal(rig, side, arm, goal, cal, bias=None):
@@ -236,28 +311,41 @@ def solve(context, rig, iterations=None):
     arms = sample_arms(context, rig, cal)
     shapes, messages = magnet_shapes(root, settings.magnets)
     try:
-        guitar = mount_pose(obj, cal, settings, root)
+        mounted = mount_pose(obj, cal, settings, root)
     except mount.MountError as exc:
         raise SolveError(str(exc)) from exc
-    root.matrix_world = guitar.matrix()
-
-    sides = {}
-    for side, arm in arms.items():
-        entries = magnet_entries(settings, cal, side, arm, guitar, shapes)
-        wrist, hits = magnets.apply(arm.wrist, entries, barriers_ignore_distance=settings.barriers_ignore_distance)
-        target, clamped = ik.reach_clamp(wrist, arm.shoulder, settings.reach_clamp * arm.length,
-                                         (arm.wrist - arm.shoulder).length)
-        sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped)
-        rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, arm.hand, None)
+    axis = aim_axis(root) if settings.aim_enabled else None
+    if settings.aim_enabled and axis is None:
+        messages.append(('WARNING', "The neck is not aimed: the Neck Pivot or Nut landmark is missing."))
+    char_world = calibrate.char_frame_world(cal.char_frame, obj.matrix_world)
+    direction = wrist.DIRECTIONS[settings.wrist_direction]
 
     tolerance = TOLERANCE_M / cal.metres_per_bu
     turns = {side: Quaternion() for side in SIDES}     # solved forearm rotation relative to the FK one
-    count, converged = 0, False
+    rotation = mounted.rotation.copy()
+    passes = max(1, iterations or settings.iterations) + (1 if axis is not None else 0)
+    count, converged, aimed, constrained = 0, False, None, False
     rig.set_active(True)
     try:
-        for count in range(1, max(1, iterations or settings.iterations) + 1):
+        for count in range(1, passes + 1):
+            guitar = magnets.GuitarPose(mounted.location, rotation, mounted.default_rotation, mounted.scale)
+            root.matrix_world = guitar.matrix()
+            sides, hands = {}, {}
             for side, arm in arms.items():
-                goal = sides[side].target - turns[side] @ (arm.wrist - arm.tip)
+                hands[side] = arm.hand
+                if side == FRET_SIDE and settings.wrist_blend > 0.0:
+                    frame, constrained = wrist.blend(arm.hand_frame, rotation, settings.wrist_offset,
+                                                     settings.wrist_blend, char_world, side, direction,
+                                                     cal.axis_rot[side])
+                    hands[side] = (frame @ arm.hand_offset.inverted()).normalized()
+                entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hands[side])
+                point, hits = magnets.apply(arm.wrist, entries,
+                                            barriers_ignore_distance=settings.barriers_ignore_distance)
+                target, clamped = ik.reach_clamp(point, arm.shoulder, settings.reach_clamp * arm.length,
+                                                 (arm.wrist - arm.shoulder).length)
+                sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped)
+                rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hands[side], None)
+                goal = target - turns[side] @ (arm.wrist - arm.tip)
                 place_goal(rig, side, arm, goal, cal, root_bias(settings, side, arm))
             context.view_layer.update()
             for side, arm in arms.items():
@@ -266,9 +354,19 @@ def solve(context, rig, iterations=None):
                 sides[side].elbow = forearm.translation
                 sides[side].wrist = obj.matrix_world @ obj.pose.bones[chain.hand].head
                 turns[side] = forearm.to_quaternion() @ arm.forearm.inverted()
-            converged = all(result.error < tolerance for result in sides.values())
-            if converged:
+            settled = all(result.error < tolerance for result in sides.values())
+            if axis is not None:
+                shift = aim_axis_shift(settings, shapes, sides[FRET_SIDE].hits, mounted.scale)
+                aim_point = aim_target(obj, rig.chains[FRET_SIDE], arms[FRET_SIDE], settings, cal)
+                aimed = aim.aim(mounted, axis[0] + shift, axis[1] + shift, aim_point,
+                                settings.aim_max_swing, settings.aim_weight)
+                following = rotation.slerp(aimed.rotation, settings.relax).normalized()
+                settled = settled and rotation_angle(rotation, following) < TOLERANCE_ANGLE
+            if settled:
+                converged = True
                 break
+            if axis is not None and count < passes:
+                rotation = following
     except Exception:
         rig.set_active(False)
         raise
@@ -283,11 +381,18 @@ def solve(context, rig, iterations=None):
             messages.append(('WARNING', f"The {name} IK misses its target by "
                                         f"{side_result.error * cal.metres_per_bu * 1000.0:.1f} mm: check the arm "
                                         "bones for IK locks, limits or stretch."))
+    if aimed is not None and aimed.clamped:
+        messages.append(('INFO', f"The neck aim was limited to {math.degrees(settings.aim_max_swing):.0f}° (Max "
+                                 "Swing): the fretting hand is far from the neck."))
+    if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
+        messages.append(('INFO', f"The neck aim had not settled after {count - 1} iterations: raise Iterations, "
+                                 "or lower Relax if the guitar oscillates."))
     settings.solve_serial += 1
     settings.solve_frame = scene.frame_current
     settings.solve_active = True
     result = FrameResult(scene.frame_current, settings.solve_serial, settings.mode, guitar, sides, count, converged,
-                         cal.metres_per_bu, messages)
+                         cal.metres_per_bu, messages, aimed,
+                         rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand), constrained)
     _results[scene.session_uid] = result
     return result
 
@@ -308,9 +413,9 @@ def check_rig(context, rig):
         for side, arm in arms.items():
             chain = rig.chains[side]
             elbow = obj.matrix_world @ obj.pose.bones[chain.forearm].head
-            wrist = obj.matrix_world @ obj.pose.bones[chain.hand].head
+            hand = obj.matrix_world @ obj.pose.bones[chain.hand].head
             errors[side] = ((elbow - arm.elbow).length * cal.metres_per_bu,
-                            (wrist - arm.wrist).length * cal.metres_per_bu)
+                            (hand - arm.wrist).length * cal.metres_per_bu)
     finally:
         rig.set_active(False)
         context.view_layer.update()
@@ -320,9 +425,9 @@ def check_rig(context, rig):
 def check_messages(errors):
     """Warnings for the sides whose IK does not reproduce the FK pose (see check_rig)."""
     messages = []
-    for side, (elbow, wrist) in errors.items():
-        if max(elbow, wrist) > CHECK_TOLERANCE_M:
+    for side, (elbow, hand) in errors.items():
+        if max(elbow, hand) > CHECK_TOLERANCE_M:
             messages.append(('WARNING', f"The {SIDE_NAMES[side]} IK does not reproduce the current pose: the elbow "
-                                        f"is {elbow * 1000.0:.1f} mm and the wrist {wrist * 1000.0:.1f} mm off. Check "
+                                        f"is {elbow * 1000.0:.1f} mm and the wrist {hand * 1000.0:.1f} mm off. Check "
                                         "the arm bones for IK locks, limits or stretch."))
     return messages

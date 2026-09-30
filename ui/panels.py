@@ -16,6 +16,7 @@ AXIS_NAMES = ("X (char. left)", "Y (up)", "Z (forward)")
 GUITAR_AXIS_NAMES = ("X (headstock)", "Y", "Z (strings)")
 CONFIDENCE_ICONS = {'HIGH': 'CHECKMARK', 'MEDIUM': 'INFO', 'LOW': 'ERROR'}
 MOUNT_TEXT = {'NONE': "Not set", 'PRESET': "Preset estimate", 'CAPTURE': "Captured"}
+WRIST_TEXT = {'DEFAULT': "SAO default", 'PRESET': "Preset", 'CAPTURE': "Captured"}
 
 
 def draw_messages(layout, context, messages):
@@ -210,7 +211,7 @@ class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
 
 class GTR_PT_mount(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_mount"
-    bl_label = "Mount"
+    bl_label = "Mount and Wrist"
 
     def draw(self, context):
         layout = self.layout
@@ -242,6 +243,36 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
             messages.append(('WARNING', "The preset mount is only an estimate: Place on Mount, adjust GTR_ROOT on "
                                         "the character, then Capture Mount."))
         draw_messages(layout, context, messages)
+
+        header, body = layout.panel("GTR_aim", default_closed=True)
+        header.label(text="Neck Aim")
+        if body is not None:
+            col = body.column()
+            col.prop(settings, "aim_enabled")
+            sub = col.column()
+            sub.active = settings.aim_enabled
+            sub.prop(settings, "aim_weight")
+            sub.prop(settings, "aim_max_swing")
+            sub.prop(settings, "aim_hand_offset")
+            draw_messages(body, context, [('INFO', "In Follow mode the neck swings toward the magenta aim point on "
+                                                   "the fretting hand; Align mode switches the aim off.")])
+
+        header, body = layout.panel("GTR_wrist", default_closed=True)
+        header.label(text="Wrist")
+        if body is not None:
+            body.operator("gtr.capture_wrist_offset", icon='PINNED')
+            text = WRIST_TEXT[settings.wrist_source]
+            if settings.wrist_source == 'CAPTURE':
+                text += f" at frame {settings.wrist_frame}"
+            euler = Quaternion(settings.wrist_offset).to_euler('XYZ')
+            draw_rows(body, [("Offset", text), ("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler))],
+                      factor=0.3)
+            col = body.column()
+            col.prop(settings, "wrist_blend")
+            col.prop(settings, "wrist_direction")
+            draw_messages(body, context, [('INFO', "The fretting wrist turns Wrist Blend of the way from the mocap "
+                                                   "to this rotation on the guitar. To set it, pose the hand on the "
+                                                   "neck and capture it.")])
 
 
 def draw_magnet(layout, context, settings, item, index):
@@ -288,8 +319,8 @@ def draw_magnet(layout, context, settings, item, index):
         rows.append(("Solve", f"{hit.distance * result.metres_per_bu * 100.0:.1f} cm away, {state}"))
     if rows:
         draw_rows(box, rows, factor=0.3)
-    if (item.kind == 'PLANE' and item.fingertip_mode != 'NONE') or item.filter != 'NONE':
-        draw_messages(box, context, [('INFO', "Fingertips and filters are not applied by the solver yet.")])
+    if item.filter != 'NONE':
+        draw_messages(box, context, [('INFO', "Filters are not applied by the solver yet.")])
 
 
 class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
@@ -340,17 +371,16 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
                                      "the mocap plays as before, until you solve a frame."))
 
         layout.prop(settings, "mode", expand=True)
-        if settings.mode == 'FOLLOW':
-            messages.append(('INFO', "The neck aim is not solved yet: the guitar stays on its mount in both "
-                                     "modes."))
         header, body = layout.panel("GTR_solve_options", default_closed=True)
         header.label(text="Options")
         if body is not None:
             col = body.column()
+            col.prop(settings, "iterations")
+            col.prop(settings, "relax")
             col.prop(settings, "reach_clamp")
             col.prop(settings, "barriers_ignore_distance")
+            col.prop(settings, "palm_margin_m")
             col.prop(settings, "autoscale_policy")
-            col.prop(settings, "iterations")
             col.prop(settings, "use_right_root_bias")
             sub = col.column()
             sub.active = settings.use_right_root_bias
@@ -371,6 +401,13 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
                     if hit.weight > 0.0 and index < len(settings.magnets):
                         rows.append(("   " + settings.magnets[index].name,
                                      "clamp" if hit.barrier else f"weight {hit.weight:.2f}"))
+            if result.neck is not None:
+                rows.append(("Neck swing", f"{math.degrees(result.swing):.1f}°"
+                                           + (", limited" if result.neck.clamped else "")))
+            if result.wrist_turn > 0.0:
+                rows.append(("Fretting wrist", f"turned {math.degrees(result.wrist_turn):.1f}°"
+                                               + (", yaw constrained" if result.wrist_constrained else "")))
+            rows.append(("Passes", f"{result.iterations}" + ("" if result.converged else ", not settled")))
             draw_rows(layout, rows, factor=0.5)
             messages += result.messages
         elif settings.solve_active:

@@ -14,7 +14,6 @@ import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty,
                        IntProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
-from mathutils import Euler
 
 from .core import bonemap, calibrate, magnets, presets
 
@@ -35,9 +34,11 @@ FINGER_ITEMS = (
 
 # SAO defaults; MMD lengths are converted to metres (1 MMD unit = 1/11 m).
 SAO_AIM_HAND_OFFSET = (0.6 / 11.0, -0.25 / 11.0, 0.0)
-# rotation_reference offset {x: 60, y: 180, z: 0} (scene.json). three.js Euler order XYZ is the matrix
-# Rx·Ry·Rz, which is Blender's 'ZYX' order. It maps the rest-aligned hand frame into the guitar frame.
-SAO_WRIST_OFFSET = tuple(Euler((math.radians(60.0), math.radians(180.0), 0.0), 'ZYX').to_quaternion())
+# rotation_reference offset {x: 60, y: 180, z: 0} (scene.json), for SAO's hand-tracking frame; with that frame's
+# turn w (wrist.py) it is the hand's T-pose-aligned frame in the guitar frame.
+SAO_WRIST_OFFSET = tuple(presets.sao_wrist((60.0, 180.0, 0.0)))
+# Reference palm length / 4 (min.js, fingertip offsets), in metres before the arm ratio.
+SAO_PALM_MARGIN = calibrate.REF_PALM_LEN / 4.0
 # Right-arm root_rotation (0, 10, -15) degrees in three.js order ZYX, which is Blender's 'XYZ'.
 SAO_RIGHT_ROOT_BIAS = (0.0, math.radians(10.0), math.radians(-15.0))
 
@@ -103,8 +104,9 @@ class GTR_Magnet(PropertyGroup):
         name="Offset (m)", size=3, precision=4, update=_redraw,
         description="Offset from the wrist in the rest-aligned hand frame, in metres")
     apply_axis_rot: BoolProperty(
-        name="Apply Axis Rotation", default=False, update=_redraw,
-        description="Rotate the offset by axis_rot (SAO skips this for T-pose avatars)")
+        name="Apply Axis Rotation", default=True, update=_redraw,
+        description="Rotate the offset by axis_rot, as SAO does for avatars whose rest pose is not a T-pose; "
+                    "axis_rot is the identity on T-pose rigs")
     fingertip_mode: EnumProperty(
         name="Fingertips", default='NONE', update=_redraw,
         items=(('NONE', "None", "The hand point itself meets the plane"),
@@ -318,9 +320,11 @@ class GTR_Settings(PropertyGroup):
         items=(('RIGHT', "Right-Handed", "Frets with the left hand and strums with the right"),
                ('LEFT', "Left-Handed", "Frets with the right hand and strums with the left")))
     iterations: IntProperty(name="Iterations", default=4, min=1, soft_max=10,
-                            description="Solve iterations per frame (magnets, IK, aim)")
-    relax: FloatProperty(name="Relax", default=0.7, min=0.05, max=1.0,
-                         description="Share of each new aim rotation taken per iteration")
+                            description="Solve iterations per frame: in Follow mode, neck aims, each followed by "
+                                        "the magnets and the IK")
+    relax: FloatProperty(name="Relax", default=1.0, min=0.05, max=1.0,
+                         description="Share of each new aim rotation taken per iteration; lower it if the "
+                                     "guitar oscillates between iterations")
     use_scene_frame_range: BoolProperty(name="Use Scene Range", default=True)
     frame_start: IntProperty(name="Start", default=1)
     frame_end: IntProperty(name="End", default=250)
@@ -341,10 +345,21 @@ class GTR_Settings(PropertyGroup):
                                description="Share of the guitar-relative rotation in the fretting wrist")
     wrist_offset: FloatVectorProperty(
         name="Wrist Offset", size=4, subtype='QUATERNION', default=SAO_WRIST_OFFSET,
-        description="Fretting-hand rotation relative to the guitar (SAO: Euler 60°, 180°, 0°)")
-    flip_guard: BoolProperty(
-        name="Flip Guard", default=True,
-        description="Blend less when the target would turn the palm more than 100° away from the mocap")
+        description="Fretting-hand rotation relative to the guitar: the hand's rest-aligned frame turned by "
+                    "axis_rot (SAO: Euler 60°, 180°, 0° in its hand-tracking frame)")
+    wrist_source: EnumProperty(
+        name="Wrist", default='DEFAULT',
+        items=(('DEFAULT', "SAO Default", "SAO's rotation_reference offset"),
+               ('PRESET', "Preset", "From a preset"),
+               ('CAPTURE', "Captured", "Captured from a pose of the fretting hand on the guitar")))
+    wrist_frame: IntProperty(name="Wrist Capture Frame", description="Frame the wrist offset was captured at")
+    wrist_direction: EnumProperty(
+        name="Yaw Direction", default='NEGATIVE',
+        description="When the mocap wrist faces more than 120° away from the target about the up axis, turn it "
+                    "this way instead of the shorter way (SAO's constrained_direction)",
+        items=(('NEGATIVE', "Negative", "SAO's setting (-1) in all guitar scenes"),
+               ('POSITIVE', "Positive", "Turn the other way (+1)"),
+               ('NONE', "Shorter Way", "Always blend the shorter way")))
 
     # Scaling (§5.1)
     autoscale_policy: EnumProperty(
@@ -374,6 +389,10 @@ class GTR_Settings(PropertyGroup):
     barriers_ignore_distance: BoolProperty(
         name="Barriers Ignore Distance", default=True,
         description="Clamp a hand behind a barrier plane however far behind it is")
+    palm_margin_m: FloatProperty(
+        name="Palm Margin (m)", default=SAO_PALM_MARGIN, min=0.0, soft_max=0.1, precision=4, update=_redraw,
+        description="How far fingertip magnets keep the nearest fingertip above their plane, before the "
+                    "arm-ratio scaling (SAO: the reference palm length / 4)")
 
     # Filters (§9)
     filter_min_cutoff: FloatProperty(name="Min Cutoff", default=1.0, min=0.001,
