@@ -28,6 +28,12 @@ the lowest fingertip `margin` above the plane; a push-only barrier puts it `marg
 and from in front leaves it no lower than P's own height plus the margin: a hand whose fingertips hang lower than
 that toward the plane is lifted, however far from the plane it is. On a hand without finger bones the solver
 passes P itself as the only fingertip, with the palm margin alone.
+
+Filters (the bake, §9) hook in where SAO filters (min.js, Tt): `tip_filter` takes the fingertip shift and
+returns it filtered; `pull_filter` takes (P, pull target, w) and returns P's move in place of w (target - P), as
+SAO's reference_point_filter does (see solver.py for the two kinds).
+
+`clamp_out` is the re-clamp's hard contact (§9): it only ever pushes a hand out of a barrier.
 """
 
 from dataclasses import dataclass
@@ -166,11 +172,11 @@ def falloff(d, reach, peak=0.0, power=0.0):
 
 
 def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True, tips=None, margin=0.0,
-         push_only=False):
+         push_only=False, tip_filter=None, pull_filter=None):
     """(new hand point, Hit) after one magnet. `holding`: the magnet held this hand on the previous frame.
 
-    `tips`: world fingertip points for fingertip v2 (plane magnets), with its `margin` and `push_only` (see the
-    module notes).
+    `tips`: world fingertip points for fingertip v2 (plane magnets), with its `margin` and `push_only`; the
+    filters are the bake's (see the module notes).
     """
     n, d, s = nearest_point(feature, point)
     reach = params.reach
@@ -185,7 +191,7 @@ def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True
         w = falloff(d, reach, params.peak, params.power)
         if params.peak > 0.0 and w > 0.0 and d > 1e-12:
             target = n + (point - n) * (params.peak / d)
-    moved = (target - point) * w
+    moved = (target - point) * w if pull_filter is None else pull_filter(point, target, w)
     shift, nearest = 0.0, None
     if tips and feature.kind == 'PLANE':
         heights = [(tip - feature.a).dot(feature.normal) for tip in tips]
@@ -194,6 +200,8 @@ def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True
         if push_only:
             best = min(best, s)
         shift, nearest = best - s, tips[low].copy()
+        if tip_filter is not None:
+            shift = tip_filter(shift)
         moved = moved - feature.normal * shift
     return point + moved, Hit(point.copy(), n, target, d, reach, w, barrier, moved, shift, nearest)
 
@@ -209,12 +217,14 @@ class Fingertips:
 @dataclass
 class Entry:
     """One magnet ready to act on a wrist: its list index, world feature, world settings, the world vector
-    from the wrist to its hand point, and its fingertips (or None)."""
+    from the wrist to its hand point, its fingertips (or None), and the bake's filter hooks (or None)."""
     index: int
     feature: Feature
     params: Params
     offset: Vector
     fingertips: Fingertips = None
+    tip_filter: object = None
+    pull_filter: object = None
 
 
 def apply(wrist, entries, *, barriers_ignore_distance=True, holding=frozenset()):
@@ -227,10 +237,33 @@ def apply(wrist, entries, *, barriers_ignore_distance=True, holding=frozenset())
                           barriers_ignore_distance=barriers_ignore_distance,
                           tips=[wrist + v for v in tips.vectors] if tips is not None else None,
                           margin=tips.margin if tips is not None else 0.0,
-                          push_only=tips is not None and tips.push_only)
+                          push_only=tips is not None and tips.push_only,
+                          tip_filter=entry.tip_filter, pull_filter=entry.pull_filter)
         wrist = point - entry.offset
         hits.append((entry.index, hit))
     return wrist, hits
+
+
+def is_barrier(entry):
+    """Whether a magnet entry is a barrier: a plane the hand may not cross."""
+    return entry.feature.kind == 'PLANE' and not entry.params.crossable
+
+
+def clamp_out(wrist, entry):
+    """(wrist, push) with the wrist pushed along a barrier's normal just far enough that its hand point is not
+    behind the plane and, with fingertips, that the lowest one is at least the fingertip margin above it (the
+    margin can be negative: the string barrier lets the fingertips reach below the string plane). `push` is the
+    distance moved, 0 when nothing penetrates. Unlike `pull` this never moves a hand toward the plane."""
+    feature = entry.feature
+    normal = feature.normal
+    push = -(wrist + entry.offset - feature.a).dot(normal)
+    tips = entry.fingertips
+    if tips is not None and tips.vectors:
+        lowest = min((wrist + v - feature.a).dot(normal) for v in tips.vectors)
+        push = max(push, tips.margin - lowest)
+    if push <= 0.0:
+        return wrist, 0.0
+    return wrist + normal * push, push
 
 
 # Scaling -------------------------------------------------------------------------------------------------------

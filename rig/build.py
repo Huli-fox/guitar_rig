@@ -16,7 +16,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, ik
+from ..core import bonemap, ik, keys
 from ..core.bonemap import SIDES
 
 COLLECTION_NAME = "GuitarRig"
@@ -116,11 +116,14 @@ def find(settings):
 
 
 def deactivate(settings):
-    """Switch the constraints off and forget the shown solve."""
+    """Switch the constraints off and forget the shown solve; the bake tracks it muted play again."""
     settings.solve_active = False
     rig = find(settings)
     if rig is not None:
         rig.set_active(False)
+    for obj in (settings.armature, settings.rig_armature):
+        if obj is not None:
+            keys.unmute_after_solve(obj)
 
 
 # Building ------------------------------------------------------------------------------------------------------
@@ -293,6 +296,7 @@ def clean(settings):
     for obj in (settings.rig_armature, settings.armature):
         if obj is not None and obj.type == 'ARMATURE':
             remove_constraints(obj)
+            keys.unmute_after_solve(obj)
     coll = settings.rig_collection
     if coll is not None:
         for item in list(coll.objects):

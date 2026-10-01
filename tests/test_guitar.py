@@ -23,6 +23,8 @@ def reset_scene():
     guitars.clear()
     for coll in list(bpy.data.collections):
         bpy.data.collections.remove(coll)
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action)
     settings = bpy.context.scene.gtr
     for key in settings.bl_rna.properties.keys():
         if key not in {"rna_type", "name"}:

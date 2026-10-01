@@ -18,6 +18,23 @@ def _poll_character(cls, context):
     return True
 
 
+def poll_solve(cls, context):
+    """Whether the scene is ready to solve: calibrated, rig built, guitar normalised, mount set."""
+    if not _poll_character(cls, context):
+        return False
+    settings = context.scene.gtr
+    if build.find(settings) is None:
+        cls.poll_message_set("Build the rig first")
+        return False
+    if settings.guitar_root is None:
+        cls.poll_message_set("Normalise the guitar first")
+        return False
+    if settings.mount_source == 'NONE':
+        cls.poll_message_set("Load a preset or capture the mount first")
+        return False
+    return True
+
+
 class GTR_OT_build_rig(bpy.types.Operator):
     """Add the helper rig: an IK and a wrist-rotation constraint on each arm, switched off until a solve, and
     their empties in a GuitarRig collection. Replaces an older rig"""
@@ -81,19 +98,7 @@ class GTR_OT_solve_frame(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _poll_character(cls, context):
-            return False
-        settings = context.scene.gtr
-        if build.find(settings) is None:
-            cls.poll_message_set("Build the rig first")
-            return False
-        if settings.guitar_root is None:
-            cls.poll_message_set("Normalise the guitar first")
-            return False
-        if settings.mount_source == 'NONE':
-            cls.poll_message_set("Load a preset or capture the mount first")
-            return False
-        return True
+        return poll_solve(cls, context)
 
     def execute(self, context):
         settings = context.scene.gtr

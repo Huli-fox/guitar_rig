@@ -1,5 +1,5 @@
 """Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mount,
-magnets and solve."""
+magnets, solve and bake."""
 
 import math
 import textwrap
@@ -320,7 +320,9 @@ def draw_magnet(layout, context, settings, item, index):
     if rows:
         draw_rows(box, rows, factor=0.3)
     if item.filter != 'NONE':
-        draw_messages(box, context, [('INFO', "Filters are not applied by the solver yet.")])
+        text = ("The filter acts from frame to frame when baking: Solve Frame shows a frame unfiltered."
+                if settings.use_filters else "Filters are switched off (Bake > Filters).")
+        draw_messages(box, context, [('INFO', text)])
 
 
 class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
@@ -345,6 +347,22 @@ class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
         else:
             draw_messages(layout, context, [('INFO', "Load a preset for SAO's magnets, or add your own. They act "
                                                      "in list order.")])
+
+        header, body = layout.panel("GTR_collider", default_closed=True)
+        header.prop(settings, "collider_enabled")
+        if body is not None:
+            col = body.column()
+            col.active = settings.collider_enabled
+            col.row(align=True).prop(settings, "collider_hands")
+            col.prop(settings, "collider_fingertips")
+            sub = col.column(align=True)
+            sub.prop(settings, "collider_radius_m")
+            sub.prop(settings, "collider_top_m")
+            sub.prop(settings, "collider_bottom_m")
+            sub.prop(settings, "collider_depth_m")
+            draw_messages(body, context, [('INFO', "A capsule along the chest that pushes the wrists forward out of "
+                                                   "the torso before the magnets act. Lengths are metres before the "
+                                                   "spine auto-scale.")])
 
 
 class GTR_PT_solve(_SubPanel, bpy.types.Panel):
@@ -418,6 +436,76 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
         draw_messages(layout, context, messages)
 
 
+def _filter_row(layout, settings, toggle, values):
+    col = layout.column(align=True)
+    if toggle is not None:
+        col.prop(settings, toggle)
+    sub = col.row(align=True)
+    sub.active = toggle is None or getattr(settings, toggle)
+    sub.prop(settings, values, text="")
+
+
+class GTR_PT_bake(_SubPanel, bpy.types.Panel):
+    bl_idname = "GTR_PT_bake"
+    bl_label = "Bake"
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.gtr
+        if settings.guitar_root is None or not settings.armature.gtr_char.calibration.is_valid:
+            layout.label(text="Normalise the guitar and calibrate first", icon='INFO')
+            return
+        col = layout.column()
+        col.prop(settings, "use_scene_frame_range")
+        if not settings.use_scene_frame_range:
+            row = col.row(align=True)
+            row.prop(settings, "frame_start")
+            row.prop(settings, "frame_end")
+        col.prop(settings, "guitar_space")
+        col.prop(settings, "bake_interpolation")
+        col.prop(settings, "bake_hide_meshes")
+
+        header, body = layout.panel("GTR_filters", default_closed=True)
+        header.prop(settings, "use_filters")
+        if body is not None:
+            col = body.column()
+            col.active = settings.use_filters
+            _filter_row(col, settings, "use_filter_fingertips", "filter_fingertip")
+            _filter_row(col, settings, "use_filter_wrist", "filter_wrist")
+            col.label(text="One Euro Magnets")
+            _filter_row(col, settings, None, "filter_pull")
+            col.label(text="Rotation Magnets")
+            _filter_row(col, settings, None, "filter_rotation")
+            _filter_row(col, settings, "use_filter_targets", "filter_target")
+            _filter_row(col, settings, "use_filter_guitar", "filter_guitar")
+            draw_messages(body, context, [('INFO', "One-euro filters: minimum cutoff (Hz), beta and derivative "
+                                                   "cutoff (Hz), with SAO's values by default. Lower cutoffs smooth "
+                                                   "more and lag more.")])
+
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator("gtr.bake", icon='REC')
+        row.operator("gtr.remove_bake", text="", icon='TRASH')
+
+        header, body = layout.panel("GTR_post", default_closed=False)
+        header.label(text="After the Bake")
+        if body is not None:
+            col = body.column(align=True)
+            col.prop(settings, "smooth_cutoff_arms")
+            col.prop(settings, "smooth_cutoff_guitar")
+            col.operator("gtr.smooth_bake", icon='MOD_SMOOTH')
+            col = body.column(align=True)
+            col.prop(settings, "reclamp_tolerance_m")
+            col.operator("gtr.reclamp", icon='SNAP_FACE')
+
+        if settings.bake_report:
+            box = layout.box()
+            draw_messages(box, context, calibrate.parse_messages(settings.bake_report))
+        else:
+            draw_messages(layout, context, [('INFO', "Bake keys the arms and the guitar into GuitarBake NLA strips; "
+                                                     "correct them on the GuitarRefine layer above.")])
+
+
 CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_mount, GTR_PT_magnets,
-           GTR_PT_solve)
+           GTR_PT_solve, GTR_PT_bake)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

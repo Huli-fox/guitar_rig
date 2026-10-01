@@ -15,7 +15,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
                        IntProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
 
-from .core import bonemap, calibrate, magnets, presets
+from .core import bonemap, calibrate, filters, magnets, presets
 
 SIDE_ITEMS = (
     ('L', "Left", "The character's left hand"),
@@ -394,15 +394,84 @@ class GTR_Settings(PropertyGroup):
         description="How far fingertip magnets keep the nearest fingertip above their plane, before the "
                     "arm-ratio scaling (SAO: the reference palm length / 4)")
 
-    # Filters (§9)
-    filter_min_cutoff: FloatProperty(name="Min Cutoff", default=1.0, min=0.001,
-                                     description="One-euro filter on the wrist targets")
-    filter_beta: FloatProperty(name="Beta", default=0.02, min=0.0)
-    filter_d_cutoff: FloatProperty(name="Derivative Cutoff", default=1.0, min=0.001)
+    # Chest collider (§13, magnet -1)
+    collider_enabled: BoolProperty(
+        name="Chest Collider", default=False, update=_redraw,
+        description="Push the wrists and their fingertips forward out of a capsule around the torso, before the "
+                    "magnets act")
+    collider_hands: EnumProperty(name="Hands", items=SIDE_ITEMS, options={'ENUM_FLAG'}, default={'L', 'R'},
+                                 update=_redraw)
+    collider_fingertips: BoolProperty(name="Fingertips", default=True, update=_redraw,
+                                      description="Keep the index, middle and ring fingertips out as well")
+    collider_radius_m: FloatProperty(
+        name="Radius (m)", default=0.12, min=0.01, soft_max=0.4, precision=3, update=_redraw,
+        description="Radius of the capsule, before the spine auto-scale")
+    collider_top_m: FloatProperty(
+        name="Top (m)", default=0.2, soft_min=-1.0, soft_max=1.0, precision=3, update=_redraw,
+        description="Upper end of the capsule's axis above the chest bone head, along the chest's up axis")
+    collider_bottom_m: FloatProperty(
+        name="Bottom (m)", default=-0.3, soft_min=-1.0, soft_max=1.0, precision=3, update=_redraw,
+        description="Lower end of the capsule's axis relative to the chest bone head")
+    collider_depth_m: FloatProperty(
+        name="Depth (m)", default=0.0, soft_min=-0.3, soft_max=0.3, precision=3, update=_redraw,
+        description="How far in front of the chest bone head the capsule's axis runs")
+
+    # Filters (§9); lengths in SAO's arm space
+    use_filters: BoolProperty(
+        name="Filters", default=True,
+        description="Filter the solve from frame to frame when baking, where SAO does. Solve Frame solves a frame "
+                    "as the first of a bake, where there is nothing to filter yet")
+    use_filter_fingertips: BoolProperty(name="Fingertips", default=True,
+                                        description="Filter the fingertip shift of fingertip magnets (SAO)")
+    filter_fingertip: FloatVectorProperty(name="Fingertip Filter", size=3, min=0.0, default=filters.SAO_FINGERTIP,
+                                          description="One-euro minimum cutoff (Hz), beta and derivative cutoff "
+                                                      "(Hz)")
+    use_filter_wrist: BoolProperty(name="Fretting Wrist", default=True,
+                                   description="Filter the fretting wrist's blended rotation, relative to the "
+                                               "chest (SAO)")
+    filter_wrist: FloatVectorProperty(name="Wrist Filter", size=3, min=0.0, default=filters.SAO_WRIST,
+                                      description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+    filter_pull: FloatVectorProperty(name="One Euro Magnets", size=3, min=0.0, default=filters.SAO_PULL,
+                                     description="Magnets whose Filter is One Euro: minimum cutoff (Hz), beta and "
+                                                 "derivative cutoff (Hz) on their pull (SAO)")
+    filter_rotation: FloatVectorProperty(name="Rotation Magnets", size=3, min=0.0, default=filters.SAO_ROTATION,
+                                         description="Magnets whose Filter is Rotation: minimum cutoff (Hz), beta and "
+                                                     "derivative cutoff (Hz) on the hand's angle about the guitar "
+                                                     "origin (SAO)")
+    use_filter_targets: BoolProperty(
+        name="Wrist Corrections", default=False,
+        description="Filter how far the collider and magnets move each wrist target. Not in SAO; the mocap itself "
+                    "is never filtered")
+    filter_target: FloatVectorProperty(name="Correction Filter", size=3, min=0.0, default=filters.SAO_TARGET,
+                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+    use_filter_guitar: BoolProperty(name="Neck Aim", default=False,
+                                    description="Filter the neck aim's swing. Not in SAO")
+    filter_guitar: FloatVectorProperty(name="Aim Filter", size=3, min=0.0, default=filters.SAO_WRIST,
+                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+
+    # Bake (§8) and post-processing (§9)
+    guitar_space: EnumProperty(
+        name="Guitar Keys", default='CHEST',
+        items=(('CHEST', "Chest Bone", "Parent GTR_ROOT to the chest bone and key it relative to the bone, so the "
+                                       "guitar follows later edits of the body"),
+               ('WORLD', "World", "Key GTR_ROOT in world space, without a parent")))
+    bake_hide_meshes: BoolProperty(
+        name="Hide Meshes While Baking", default=True,
+        description="Disable the scene's meshes in viewports during the bake, which makes it much faster. The pose "
+                    "does not depend on them, and they come back afterwards")
+    bake_interpolation: EnumProperty(
+        name="Interpolation", default='LINEAR',
+        items=(('LINEAR', "Linear", "Straight between the per-frame keys"),
+               ('BEZIER', "Bezier", "Smooth between the per-frame keys")))
     smooth_cutoff_arms: FloatProperty(name="Arm Cutoff (Hz)", default=6.0, min=0.1,
                                       description="Post-bake low-pass cutoff for the arm channels")
     smooth_cutoff_guitar: FloatProperty(name="Guitar Cutoff (Hz)", default=3.0, min=0.1,
                                         description="Post-bake low-pass cutoff for the guitar channels")
+    reclamp_tolerance_m: FloatProperty(
+        name="Re-clamp Tolerance (m)", default=0.0005, min=0.0, soft_max=0.01, precision=4,
+        description="Re-clamp re-solves the frames where a hand is further than this into a barrier or the chest "
+                    "collider")
+    bake_report: StringProperty(name="Bake Report", description="What the last bake, smoothing or re-clamp did")
 
     # Helper rig and Solve Frame (§4, §6)
     rig_collection: PointerProperty(name="Rig Collection", type=bpy.types.Collection,

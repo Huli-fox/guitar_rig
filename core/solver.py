@@ -1,11 +1,12 @@
 """Per-frame solve (§7): the guitar on its chest mount, aimed at the fretting hand; the wrist blend on the fretting
-hand; the magnets, fingertips and reach clamp on both wrist targets; Blender's IK through the helper rig
-(rig/build.py).
+hand; the chest collider, the magnets, fingertips and reach clamp on both wrist targets; Blender's IK through the
+helper rig (rig/build.py).
 
 The FK pose is read with the rig's constraints at influence 0, and every pass starts from it, so nothing drifts.
 A pass, with the guitar at rotation q (the mount rotation at first):
   1. the fretting wrist's rotation is blended toward the guitar (wrist.py); the other hand keeps its FK rotation;
-  2. the magnets move each wrist target, with hand offsets and fingertips turned by the solved hand;
+  2. the chest collider pushes each wrist out of the torso (collider.py), and the magnets move each wrist target,
+     with hand offsets and fingertips turned by the solved hand;
   3. the IK puts the arms there (one depsgraph update);
   4. in FOLLOW, the neck is aimed at the solved fretting hand from the mount rotation (aim.py), and q moves
      `relax` of the way to it.
@@ -15,8 +16,23 @@ they were solved for. The passes also refine the IK goal: the IK puts the IK for
 where a rig's hand does not start at that tail, the goal is corrected by the hand offset turned with the solved
 forearm.
 
-The last result, with what each magnet did, is kept for the overlay and the panels while the rig shows it, which
-is until the frame changes.
+A bake (baker.py) solves frame after frame and carries a SolveState from one to the next: the filters (filters.py)
+and the snap magnets that held each hand (their hysteresis). The filters act where SAO's do:
+- the fingertip shift of fingertip magnets, and a magnet's pull when its Filter is set: One Euro filters the pull
+  w (target - P) as a vector, Rotation filters the angle that P's offset from the magnet subtends at the guitar
+  origin, asin(d / R), and puts P that far from the magnet: when the magnet does not act (w = 0) the offset is P's
+  own, so P's height above the fretboard edge lags; when it clamps (w = 1) the offset shrinks to nothing (SAO's
+  1/9999), so P settles onto the plane smoothly (min.js, Tt, reference_point_filter);
+- the fretting wrist rotation after the blend (It, hand_rot_filter), here relative to the chest, so the body's
+  own turns are not delayed;
+and, off by default, where SAO does not: each wrist target's correction (the target less the FK wrist, so the
+mocap's own motion is never smoothed), and the neck aim's swing. Lengths are filtered in SAO's arm space.
+Solve Frame solves the current frame like the first frame of a bake: the filters have no history to smooth.
+
+The last Solve Frame result, with what each magnet did, is kept for the overlay and the panels while the rig
+shows it, which is until the frame changes. Meanwhile a bake's tracks are muted (keys.mute_for_solve): the IK
+then starts from the mocap, as in the bake, and Blender's IK result depends on the pose it starts from (the
+upper arm's twist turns the pole alignment).
 """
 
 import math
@@ -24,7 +40,7 @@ from dataclasses import dataclass, field
 
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import aim, calibrate, ik, landmarks, magnets, mount, wrist
+from . import aim, calibrate, collider, filters, ik, keys, landmarks, magnets, mount, wrist
 from .bonemap import SIDES
 from .mathx import rotation_angle
 
@@ -33,6 +49,8 @@ TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
 SIDE_NAMES = {'L': "left", 'R': "right"}
 FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
+SAO_UNITS_PER_M = 11.0      # MMD units per metre: SAO's lengths, in the arm space of its reference avatar
+CLAMPED_OFFSET_SAO = 1.0 / 9999.0   # SAO's offset of a clamped hand for the rotation filter, in its units
 
 _results = {}               # scene session_uid -> FrameResult of the last solve
 
@@ -124,9 +142,15 @@ def reach_scale(settings, cal):
     return magnets.distance_scale(settings.autoscale_policy, cal.ratio_arm) / cal.metres_per_bu
 
 
-def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None):
+def sao_unit(settings, cal):
+    """Scene units per unit of SAO's arm space, the unit its length filters work in."""
+    return reach_scale(settings, cal) / SAO_UNITS_PER_M
+
+
+def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None, hooks=None):
     """The magnets of `side` as magnets.Entry, in scene units, for the guitar placed at `guitar`. `hand` is the
-    hand's solved world rotation (default: FK): hand offsets and fingertips turn with it."""
+    hand's solved world rotation (default: FK): hand offsets and fingertips turn with it. `hooks` (Hooks) adds the
+    bake's filters."""
     distance = reach_scale(settings, cal)
     offset_scale = magnets.offset_scale(settings.autoscale_policy, cal.ratio_arm, cal.ratio_palm) / cal.metres_per_bu
     hand = arm.hand if hand is None else hand
@@ -153,19 +177,120 @@ def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None):
             else:
                 vectors = [offset]      # no finger bones: the hand point itself keeps the palm margin (§13)
             fingertips = magnets.Fingertips(vectors, margin, item.push_only)
+        tip_filter = pull_filter = None
+        if hooks is not None:
+            tip_filter = hooks.tip(side, index) if fingertips is not None else None
+            pull_filter = hooks.pull(side, index, item.filter)
         entries.append(magnets.Entry(index, shape.world(guitar, item.use_default_rotation), params, offset,
-                                     fingertips))
+                                     fingertips, tip_filter, pull_filter))
     return entries
+
+
+def mount_from_chest(chest_pos, chest_frame, cal, settings, scale):
+    """The guitar on its chest mount for a chest pose (P_chest, Q_chest), as a magnets.GuitarPose."""
+    matrix = mount.mount_matrix(chest_pos, chest_frame, settings.mount_t, settings.mount_q,
+                                mount.spine_factor(cal, settings.autoscale_policy), scale, cal.metres_per_bu)
+    location, rotation, _ = matrix.decompose()
+    return magnets.GuitarPose(location, rotation, rotation.copy(), Vector(scale))
 
 
 def mount_pose(obj, cal, settings, root):
     """The guitar on its chest mount in the armature's current pose, as a magnets.GuitarPose."""
     chest_pos, chest_frame = mount.chest_pose(obj, cal, obj.gtr_char.bone_map.chest)
-    scale = mount.root_scale(root)
-    matrix = mount.mount_matrix(chest_pos, chest_frame, settings.mount_t, settings.mount_q,
-                                mount.spine_factor(cal, settings.autoscale_policy), scale, cal.metres_per_bu)
-    location, rotation, _ = matrix.decompose()
-    return magnets.GuitarPose(location, rotation, rotation.copy(), scale)
+    return mount_from_chest(chest_pos, chest_frame, cal, settings, mount.root_scale(root))
+
+
+# Filters -------------------------------------------------------------------------------------------------------
+
+class Hooks:
+    """The bake's filters (filters.py) for one solve pass, as hooks for the solve: each returns its input where
+    its filter is off. `unit` is the scene length of one unit of SAO's arm space; `origin` the guitar origin."""
+
+    def __init__(self, settings, bank, unit, origin):
+        self.settings, self.bank, self.unit, self.origin = settings, bank, unit, origin
+        self.on = bank is not None and settings.use_filters
+
+    def tip(self, side, index):
+        """The fingertip shift filter of magnet `index`, or None."""
+        if not (self.on and self.settings.use_filter_fingertips):
+            return None
+        bank, unit, key, params = self.bank, self.unit, ('TIP', side, index), tuple(self.settings.filter_fingertip)
+        return lambda shift: bank.apply(key, 'SCALAR', params, shift / unit) * unit
+
+    def pull(self, side, index, kind):
+        """The pull filter of magnet `index` for its Filter setting, or None (see the module notes)."""
+        if not self.on or kind not in {'ONE_EURO', 'ROTATION_BASED'}:
+            return None
+        bank, unit, key = self.bank, self.unit, ('PULL', side, index)
+        zero = Vector((0.0, 0.0, 0.0))
+        if kind == 'ONE_EURO':
+            params = tuple(self.settings.filter_pull)
+
+            def vector(point, target, weight):
+                moved = bank.apply(key, 'VECTOR', params, (target - point) * (weight / unit) if weight > 0.0 else zero)
+                return moved * unit if weight > 0.0 else zero.copy()
+            return vector
+
+        params, origin = tuple(self.settings.filter_rotation), self.origin
+
+        def rotation(point, target, weight):
+            radius = max((point - origin).length, 1e-9)
+            if weight >= 1.0:
+                base, offset = target, target - point
+                offset = offset.normalized() * (CLAMPED_OFFSET_SAO * unit) if offset.length > 1e-12 else zero
+            elif weight > 0.0:
+                base, offset = point, (target - point) * weight
+            else:
+                base, offset = target, point - target
+            length = offset.length
+            angle = bank.apply(key, 'SCALAR', params, math.asin(min(length / radius, 1.0)))
+            if length <= 1e-12:
+                return base - point
+            return base + offset * (math.sin(angle) * radius / length) - point
+        return rotation
+
+    def wrist(self, side, hand, chest_frame):
+        """The fretting wrist's world rotation after its filter, which runs relative to the chest."""
+        if not (self.on and self.settings.use_filter_wrist):
+            return hand
+        chest_frame = Quaternion(chest_frame)
+        relative = self.bank.apply(('WRIST', side), 'QUATERNION', tuple(self.settings.filter_wrist),
+                                   chest_frame.inverted() @ hand)
+        return (chest_frame @ relative).normalized()
+
+    def target(self, side, fk_wrist, point):
+        """A wrist target after its correction filter: the target less the FK wrist is filtered."""
+        if not (self.on and self.settings.use_filter_targets):
+            return point
+        moved = self.bank.apply(('TARGET', side), 'VECTOR', tuple(self.settings.filter_target),
+                                (point - fk_wrist) / self.unit)
+        return fk_wrist + moved * self.unit
+
+    def guitar(self, rotation, default_rotation):
+        """An aimed guitar rotation after its filter, which runs on the swing away from the mount rotation."""
+        if not (self.on and self.settings.use_filter_guitar):
+            return rotation
+        swing = self.bank.apply(('GUITAR',), 'QUATERNION', tuple(self.settings.filter_guitar),
+                                rotation @ default_rotation.inverted())
+        return (swing @ default_rotation).normalized()
+
+
+@dataclass
+class SolveState:
+    """What a bake carries from one frame to the next: the filters and, per side, the magnets that held the hand
+    (their hysteresis). A new state (Solve Frame) has neither, so the filters pass the frame through."""
+    bank: filters.FilterBank
+    holding: dict = field(default_factory=lambda: {side: frozenset() for side in SIDES})
+
+    @classmethod
+    def new(cls, fps):
+        return cls(filters.FilterBank(fps))
+
+    def commit(self, result):
+        """Keep what the solved frame `result` leaves for the next one."""
+        self.bank.commit()
+        self.holding = {side: frozenset(index for index, hit in side_result.hits if hit.holds)
+                        for side, side_result in result.sides.items()}
 
 
 # Results -------------------------------------------------------------------------------------------------------
@@ -173,11 +298,12 @@ def mount_pose(obj, cal, settings, root):
 @dataclass
 class SideResult:
     fk_wrist: Vector
-    target: Vector              # the wrist target after the magnets and the reach clamp
+    target: Vector              # the wrist target after the collider, the magnets and the reach clamp
     hits: list                  # [(magnet index, magnets.Hit)] in list order
     clamped: bool               # the reach clamp moved the target
     wrist: Vector = None        # the solved wrist
     elbow: Vector = None        # the solved elbow
+    collider: object = None     # collider.Contact: what the chest collider did, or None when it is off
 
     @property
     def error(self):
@@ -231,6 +357,9 @@ def summary(result, items):
         moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
         acting = [f"{items[i].name} {'clamp' if hit.barrier else format(hit.weight, '.2f')}"
                   for i, hit in side_result.hits if hit.weight > 0.0 and i < len(items)]
+        contact = side_result.collider
+        if contact is not None and contact.weight > 0.0:
+            acting.insert(0, f"chest collider {contact.moved.length * result.metres_per_bu * 100.0:.1f} cm")
         text = f"{SIDE_NAMES[side]} wrist moved {moved:.1f} cm"
         parts.append(text + (f" ({', '.join(acting)})" if acting else ""))
     if result.neck is not None:
@@ -249,10 +378,18 @@ def _load(obj):
     return cal
 
 
+def scene_fps(scene):
+    return scene.render.fps / (scene.render.fps_base or 1.0)
+
+
 def sample_arms(context, rig, cal):
     """The FK pose of both arms: the rig's constraints are switched off and the scene is evaluated."""
     rig.set_active(False)
     context.view_layer.update()
+    return _arms(rig, cal)
+
+
+def _arms(rig, cal):
     return {side: sample_arm(rig.armature, rig.chains[side], cal.char_frame, rig.ik[side].pole_angle,
                              [tip for tip in cal.fingertips if tip.side == side])
             for side in SIDES}
@@ -296,31 +433,81 @@ def place_goal(rig, side, arm, goal, cal, bias=None):
     rig.helper("BEND", side).matrix_world = Matrix.LocRotScale(arm.elbow, bend, None)
 
 
-def solve(context, rig, iterations=None):
-    """Solve the current frame and leave the rig showing it (§7). Returns a FrameResult; raises SolveError."""
+@dataclass
+class Setup:
+    """What a solve reads once; a bake reads it once for all its frames."""
+    armature: object
+    root: object                # GTR_ROOT
+    cal: calibrate.Calibration
+    shapes: dict                # magnet index -> magnets.Shape
+    axis: tuple                 # (NECK_PIVOT, NUT) in GTR_ROOT space, or None: no neck aim
+    scale: Vector               # GTR_ROOT's world scale
+    fps: float                  # the scene's frame rate, for the filters
+    messages: list = field(default_factory=list)
+
+
+def prepare(context, rig):
+    """The Setup of a solve for the scene's settings; raises SolveError when the scene is not ready."""
     scene = context.scene
     settings = scene.gtr
     obj, root = rig.armature, settings.guitar_root
-    settings.solve_active = False
     cal = _load(obj)
     if root is None:
         raise SolveError("Normalise the guitar first.")
     if settings.mount_source == 'NONE':
         raise SolveError("Load a preset or capture the mount first.")
-
-    arms = sample_arms(context, rig, cal)
-    shapes, messages = magnet_shapes(root, settings.magnets)
+    chest = obj.gtr_char.bone_map.chest
+    if not chest or obj.pose.bones.get(chest) is None:
+        raise SolveError("The chest bone is not mapped, or not in the armature.")
     try:
-        mounted = mount_pose(obj, cal, settings, root)
+        scale = mount.root_scale(root)
     except mount.MountError as exc:
         raise SolveError(str(exc)) from exc
+    shapes, messages = magnet_shapes(root, settings.magnets)
     axis = aim_axis(root) if settings.aim_enabled else None
     if settings.aim_enabled and axis is None:
         messages.append(('WARNING', "The neck is not aimed: the Neck Pivot or Nut landmark is missing."))
-    char_world = calibrate.char_frame_world(cal.char_frame, obj.matrix_world)
-    direction = wrist.DIRECTIONS[settings.wrist_direction]
+    return Setup(obj, root, cal, shapes, axis, scale, scene_fps(scene), messages)
 
+
+@dataclass
+class Pose:
+    """The FK pose of one frame, as the solve reads it (world space)."""
+    arms: dict                  # side -> Arm
+    mounted: magnets.GuitarPose
+    chest: tuple                # (P_chest, Q_chest): the chest bone head and its rest-aligned frame
+    char_world: Quaternion      # the character frame
+
+
+def sample_pose(context, rig, setup, update=True):
+    """The FK pose of the current frame. With `update` the rig is switched off and the scene evaluated first, with
+    the add-on's bake tracks muted, so a previous bake is not taken for the mocap. Without, the caller has just
+    evaluated the frame that way (the bake)."""
+    obj, cal = setup.armature, setup.cal
+    if update:
+        with keys.muted((obj,)):
+            arms = sample_arms(context, rig, cal)
+            chest = mount.chest_pose(obj, cal, obj.gtr_char.bone_map.chest)
+    else:
+        arms = _arms(rig, cal)
+        chest = mount.chest_pose(obj, cal, obj.gtr_char.bone_map.chest)
+    mounted = mount_from_chest(*chest, cal, context.scene.gtr, setup.scale)
+    return Pose(arms, mounted, chest, calibrate.char_frame_world(cal.char_frame, obj.matrix_world))
+
+
+def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=True):
+    """Solve the FK pose `pose` (sample_pose) of the current frame, filtering from `state` (SolveState), and leave
+    the rig showing it. The filters' new state is left pending in `state.bank`: SolveState.commit keeps it.
+    `show_guitar` puts GTR_ROOT on the solved guitar. Returns a FrameResult."""
+    scene = context.scene
+    settings = scene.gtr
+    obj, root, cal, shapes, axis = setup.armature, setup.root, setup.cal, setup.shapes, setup.axis
+    arms, mounted = pose.arms, pose.mounted
+    messages = list(setup.messages)
+    direction = wrist.DIRECTIONS[settings.wrist_direction]
     tolerance = TOLERANCE_M / cal.metres_per_bu
+    unit = sao_unit(settings, cal)
+    body = collider.capsule(settings, cal, *pose.chest)
     turns = {side: Quaternion() for side in SIDES}     # solved forearm rotation relative to the FK one
     rotation = mounted.rotation.copy()
     passes = max(1, iterations or settings.iterations) + (1 if axis is not None else 0)
@@ -329,22 +516,31 @@ def solve(context, rig, iterations=None):
     try:
         for count in range(1, passes + 1):
             guitar = magnets.GuitarPose(mounted.location, rotation, mounted.default_rotation, mounted.scale)
-            root.matrix_world = guitar.matrix()
+            if show_guitar:
+                root.matrix_world = guitar.matrix()
+            hooks = Hooks(settings, state.bank, unit, guitar.location)
             sides, hands = {}, {}
             for side, arm in arms.items():
-                hands[side] = arm.hand
+                hand = arm.hand
                 if side == FRET_SIDE and settings.wrist_blend > 0.0:
                     frame, constrained = wrist.blend(arm.hand_frame, rotation, settings.wrist_offset,
-                                                     settings.wrist_blend, char_world, side, direction,
+                                                     settings.wrist_blend, pose.char_world, side, direction,
                                                      cal.axis_rot[side])
-                    hands[side] = (frame @ arm.hand_offset.inverted()).normalized()
-                entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hands[side])
-                point, hits = magnets.apply(arm.wrist, entries,
-                                            barriers_ignore_distance=settings.barriers_ignore_distance)
+                    hand = hooks.wrist(side, (frame @ arm.hand_offset.inverted()).normalized(), pose.chest[1])
+                hands[side] = hand
+                start, contact = arm.wrist, None
+                if body is not None and side in settings.collider_hands:
+                    turn = hand @ arm.hand.inverted()
+                    tips = [arm.wrist + turn @ v for v in arm.tips.values()] if settings.collider_fingertips else ()
+                    start, contact = collider.push(body, arm.wrist, tips)
+                entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hand, hooks)
+                point, hits = magnets.apply(start, entries, barriers_ignore_distance=settings.barriers_ignore_distance,
+                                            holding=state.holding.get(side, frozenset()))
+                point = hooks.target(side, arm.wrist, point)
                 target, clamped = ik.reach_clamp(point, arm.shoulder, settings.reach_clamp * arm.length,
                                                  (arm.wrist - arm.shoulder).length)
-                sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped)
-                rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hands[side], None)
+                sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped, collider=contact)
+                rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hand, None)
                 goal = target - turns[side] @ (arm.wrist - arm.tip)
                 place_goal(rig, side, arm, goal, cal, root_bias(settings, side, arm))
             context.view_layer.update()
@@ -360,7 +556,8 @@ def solve(context, rig, iterations=None):
                 aim_point = aim_target(obj, rig.chains[FRET_SIDE], arms[FRET_SIDE], settings, cal)
                 aimed = aim.aim(mounted, axis[0] + shift, axis[1] + shift, aim_point,
                                 settings.aim_max_swing, settings.aim_weight)
-                following = rotation.slerp(aimed.rotation, settings.relax).normalized()
+                wanted = hooks.guitar(aimed.rotation, mounted.default_rotation)
+                following = rotation.slerp(wanted, settings.relax).normalized()
                 settled = settled and rotation_angle(rotation, following) < TOLERANCE_ANGLE
             if settled:
                 converged = True
@@ -369,6 +566,7 @@ def solve(context, rig, iterations=None):
                 rotation = following
     except Exception:
         rig.set_active(False)
+        state.bank.discard()
         raise
 
     for side, side_result in sides.items():
@@ -387,12 +585,29 @@ def solve(context, rig, iterations=None):
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
         messages.append(('INFO', f"The neck aim had not settled after {count - 1} iterations: raise Iterations, "
                                  "or lower Relax if the guitar oscillates."))
+    return FrameResult(scene.frame_current, settings.solve_serial, settings.mode, guitar, sides, count, converged,
+                       cal.metres_per_bu, messages, aimed, rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand),
+                       constrained)
+
+
+def solve(context, rig, iterations=None):
+    """Solve the current frame and leave the rig showing it (§7), as the first frame of a bake would be. Returns a
+    FrameResult; raises SolveError."""
+    scene = context.scene
+    settings = scene.gtr
+    settings.solve_active = False
+    setup = prepare(context, rig)
+    keys.mute_for_solve(rig.armature)
+    try:
+        pose = sample_pose(context, rig, setup)
+        result = solve_pose(context, rig, setup, pose, SolveState.new(setup.fps), iterations)
+    except Exception:
+        keys.unmute_after_solve(rig.armature)
+        raise
     settings.solve_serial += 1
     settings.solve_frame = scene.frame_current
     settings.solve_active = True
-    result = FrameResult(scene.frame_current, settings.solve_serial, settings.mode, guitar, sides, count, converged,
-                         cal.metres_per_bu, messages, aimed,
-                         rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand), constrained)
+    result.serial = settings.solve_serial
     _results[scene.session_uid] = result
     return result
 

@@ -13,8 +13,9 @@ a normal, barrier planes crossed. The active magnet also shows its reach D on th
 around a line, a bar along the normal of a plane. While the rig shows a solve, a white line runs from each FK
 wrist to its target, and each magnet that saw the hand draws its pull, from grey (weight 0) to full colour
 (weight 1), red for a barrier clamp, with the weights as text, and in FOLLOW a magenta line runs from the neck
-pivot to the aim point the neck was swung toward. The geometry is built without the gpu module, so tests can
-check it in background mode.
+pivot to the aim point the neck was swung toward. The chest collider, when on, is drawn as its capsule (two
+rings and four lines, pale yellow); in a shown solve, a yellow line marks how far it pushed a wrist. The geometry
+is built without the gpu module, so tests can check it in background mode.
 """
 
 import math
@@ -26,7 +27,7 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Quaternion, Vector
 
-from ..core import aim, bonemap, calibrate, landmarks, magnets, mount, solver
+from ..core import aim, bonemap, calibrate, collider, landmarks, magnets, mount, solver
 
 AXIS_COLORS = ((0.95, 0.25, 0.25, 1.0), (0.35, 0.9, 0.3, 1.0), (0.3, 0.5, 1.0, 1.0))
 TIP_COLORS = {'TAIL': (1.0, 0.85, 0.2, 1.0), 'ESTIMATE': (1.0, 0.5, 0.1, 1.0)}
@@ -37,6 +38,8 @@ MAGNET_COLORS = {'L': (0.3, 0.75, 1.0, 1.0), 'R': (1.0, 0.55, 0.2, 1.0)}
 IDLE_COLOR = (0.55, 0.55, 0.55, 1.0)
 BARRIER_COLOR = (1.0, 0.25, 0.25, 1.0)
 WRIST_COLOR = (1.0, 1.0, 1.0, 1.0)
+COLLIDER_COLOR = (0.9, 0.85, 0.4, 0.6)
+CONTACT_COLOR = (1.0, 0.9, 0.2, 1.0)
 HIPS_AXIS_LEN = 0.25    # metres
 BONE_AXIS_LEN = 0.08
 MOUNT_AXIS_LEN = 0.2
@@ -245,6 +248,29 @@ def _magnets(geo, context, settings, unit):
             geo.dot(hit.target, color)
 
 
+def _collider(geo, context, settings):
+    """The chest collider's capsule in the current pose, and its pushes in the solve the rig shows."""
+    obj = settings.armature
+    cal = obj.gtr_char.calibration if obj is not None else None
+    if not settings.collider_enabled or not settings.show_magnets or cal is None or not cal.is_valid:
+        return
+    try:
+        body = collider.capsule(settings, cal, *mount.chest_pose(obj, cal, obj.gtr_char.bone_map.chest))
+    except mount.MountError:
+        return
+    u, v = body.frame @ Vector((1.0, 0.0, 0.0)), body.frame @ Vector((0.0, 0.0, 1.0))
+    rings = [geo.circle(body.world((0.0, y, 0.0)), u, v, body.radius, COLLIDER_COLOR)
+             for y in (body.bottom, body.top)]
+    for i in range(0, CIRCLE_SEGMENTS, CIRCLE_SEGMENTS // 4):
+        geo.line(rings[0][i], rings[1][i], COLLIDER_COLOR)
+    result = solver.shown_result(context.scene)
+    for side_result in (result.sides.values() if result is not None else ()):
+        contact = side_result.collider
+        if contact is not None and contact.weight > 0.0:
+            geo.line(contact.point, contact.point + contact.moved, CONTACT_COLOR)
+            geo.dot(contact.point, CONTACT_COLOR)
+
+
 def build_geometry(context):
     """(line points, line colours, dot points, dot colours) in world space, or None if there is nothing to draw."""
     settings = context.scene.gtr
@@ -256,6 +282,7 @@ def build_geometry(context):
     _guitar(geo, settings)
     _mount(geo, settings, unit_scale)
     _magnets(geo, context, settings, 1.0 / unit_scale)
+    _collider(geo, context, settings)
     if not geo.lines and not geo.dots:
         return None
     return geo.lines, geo.line_colors, geo.dots, geo.dot_colors
@@ -272,6 +299,11 @@ def build_labels(context):
     labels = []
     for side, side_result in result.sides.items():
         line = 0
+        contact = side_result.collider
+        if contact is not None and contact.weight > 0.0:
+            moved = contact.moved.length * result.metres_per_bu * 100.0
+            labels.append((side_result.target, line, f"Chest collider: {moved:.1f} cm", CONTACT_COLOR))
+            line += 1
         for index, hit in side_result.hits:
             if hit.weight <= 0.0 or index >= len(settings.magnets):
                 continue

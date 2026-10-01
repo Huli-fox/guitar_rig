@@ -9,7 +9,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Matrix, Quaternion, Vector
 
-from ..core import calibrate, guitar_frame, landmarks, mount, presets
+from ..core import calibrate, guitar_frame, keys, landmarks, mount, presets
 from ..core.magnets import apply_mode
 from .common import report, tag_redraw
 
@@ -143,13 +143,17 @@ def _store_detection(info, detection, extra=()):
     info.messages = calibrate.format_messages(list(detection.messages) + list(extra))
 
 
-def _poll_root(cls, context):
+def _poll_root(cls, context, moves=False):
+    """`moves`: the operator moves GTR_ROOT, which a bake animates."""
     root = context.scene.gtr.guitar_root
     if root is None:
         cls.poll_message_set("Normalise the guitar first")
         return False
     if context.mode != 'OBJECT':
         cls.poll_message_set("Switch to Object Mode first")
+        return False
+    if moves and keys.has_bake(root):
+        cls.poll_message_set("The bake animates GTR_ROOT: remove the bake first")
         return False
     return True
 
@@ -173,8 +177,12 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
         if context.mode != 'OBJECT':
             cls.poll_message_set("Switch to Object Mode first")
             return False
-        if not selected_meshes(context) and context.scene.gtr.guitar_root is None:
+        root = context.scene.gtr.guitar_root
+        if not selected_meshes(context) and root is None:
             cls.poll_message_set("Select the guitar meshes first")
+            return False
+        if root is not None and keys.has_bake(root):
+            cls.poll_message_set("The bake animates GTR_ROOT: remove the bake first")
             return False
         return True
 
@@ -248,7 +256,7 @@ class GTR_OT_flip_frame(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _poll_root(cls, context)
+        return _poll_root(cls, context, moves=True)
 
     def execute(self, context):
         root = context.scene.gtr.guitar_root
@@ -337,7 +345,7 @@ class GTR_OT_load_preset(_LoadPresetOptions, bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _poll_root(cls, context)
+        return _poll_root(cls, context, moves=True)
 
     def invoke(self, context, event):
         self._set_defaults(context)
@@ -360,7 +368,7 @@ class GTR_OT_load_preset_file(_LoadPresetOptions, bpy.types.Operator, ImportHelp
 
     @classmethod
     def poll(cls, context):
-        return _poll_root(cls, context)
+        return _poll_root(cls, context, moves=True)
 
     def execute(self, context):
         self._set_defaults(context)
