@@ -10,6 +10,8 @@ A pass, with the guitar at rotation q (the mount rotation at first):
   3. the IK puts the arms there (one depsgraph update);
   4. in FOLLOW, the neck is aimed at the solved fretting hand from the mount rotation (aim.py), and q moves
      `relax` of the way to it.
+Each frame is solved in its mode (modes.py): the scene's settings, or a range override's switch of the neck aim and
+the fretboard-edge magnet, with the aim weight cross-faded where the mode changes.
 SAO runs this loop once per frame and feeds the result into the next; offline it repeats until the aim and the
 wrists settle, with at most `iterations` aims and one pass after the last, so the hands always match the guitar
 they were solved for. The passes also refine the IK goal: the IK puts the IK forearm's tail on its goal, and
@@ -40,7 +42,7 @@ from dataclasses import dataclass, field
 
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import aim, calibrate, collider, filters, ik, keys, landmarks, magnets, mount, wrist
+from . import aim, calibrate, collider, filters, ik, keys, landmarks, magnets, modes, mount, wrist
 from .bonemap import SIDES
 from .mathx import rotation_angle
 
@@ -147,21 +149,22 @@ def sao_unit(settings, cal):
     return reach_scale(settings, cal) / SAO_UNITS_PER_M
 
 
-def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None, hooks=None):
+def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None, hooks=None, frame_mode=None):
     """The magnets of `side` as magnets.Entry, in scene units, for the guitar placed at `guitar`. `hand` is the
     hand's solved world rotation (default: FK): hand offsets and fingertips turn with it. `hooks` (Hooks) adds the
-    bake's filters."""
+    bake's filters. `frame_mode` (modes.FrameMode) switches the settings a range override changes."""
     distance = reach_scale(settings, cal)
     offset_scale = magnets.offset_scale(settings.autoscale_policy, cal.ratio_arm, cal.ratio_palm) / cal.metres_per_bu
     hand = arm.hand if hand is None else hand
     hand_frame = hand @ arm.hand_offset
     turn = hand @ arm.hand.inverted()
+    value = getattr if frame_mode is None else frame_mode.magnet
     entries = []
     for index, item in enumerate(settings.magnets):
         shape = shapes.get(index)
         if shape is None or item.hand != side:
             continue
-        params = magnets.Params(item.effective_distance_m * distance, item.peak * distance, item.power,
+        params = magnets.Params(item.effective_distance_m * distance, item.peak * distance, value(item, "power"),
                                 item.crossable, item.hysteresis)
         offset = Vector()
         if item.hand_offset_mode != 'NONE':
@@ -180,7 +183,7 @@ def magnet_entries(settings, cal, side, arm, guitar, shapes, hand=None, hooks=No
         tip_filter = pull_filter = None
         if hooks is not None:
             tip_filter = hooks.tip(side, index) if fingertips is not None else None
-            pull_filter = hooks.pull(side, index, item.filter)
+            pull_filter = hooks.pull(side, index, value(item, "filter"))
         entries.append(magnets.Entry(index, shape.world(guitar, item.use_default_rotation), params, offset,
                                      fingertips, tip_filter, pull_filter))
     return entries
@@ -324,6 +327,7 @@ class FrameResult:
     neck: aim.Aim = None        # the last neck aim (FOLLOW), or None
     wrist_turn: float = 0.0     # radians the fretting wrist turned away from the mocap
     wrist_constrained: bool = False     # the wrist yaw was turned the constrained way
+    frame_mode: modes.FrameMode = None  # the mode the frame was solved in
 
     @property
     def swing(self):
@@ -443,6 +447,7 @@ class Setup:
     axis: tuple                 # (NECK_PIVOT, NUT) in GTR_ROOT space, or None: no neck aim
     scale: Vector               # GTR_ROOT's world scale
     fps: float                  # the scene's frame rate, for the filters
+    schedule: modes.Schedule    # the mode of each frame
     messages: list = field(default_factory=list)
 
 
@@ -464,10 +469,12 @@ def prepare(context, rig):
     except mount.MountError as exc:
         raise SolveError(str(exc)) from exc
     shapes, messages = magnet_shapes(root, settings.magnets)
-    axis = aim_axis(root) if settings.aim_enabled else None
-    if settings.aim_enabled and axis is None:
+    schedule = modes.Schedule(settings)
+    axis = aim_axis(root)
+    aims = settings.aim_enabled or any(mode == 'FOLLOW' for *_range, mode in schedule.ranges)
+    if aims and axis is None:
         messages.append(('WARNING', "The neck is not aimed: the Neck Pivot or Nut landmark is missing."))
-    return Setup(obj, root, cal, shapes, axis, scale, scene_fps(scene), messages)
+    return Setup(obj, root, cal, shapes, axis, scale, scene_fps(scene), schedule, messages)
 
 
 @dataclass
@@ -501,7 +508,9 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
     `show_guitar` puts GTR_ROOT on the solved guitar. Returns a FrameResult."""
     scene = context.scene
     settings = scene.gtr
-    obj, root, cal, shapes, axis = setup.armature, setup.root, setup.cal, setup.shapes, setup.axis
+    obj, root, cal, shapes = setup.armature, setup.root, setup.cal, setup.shapes
+    frame_mode = setup.schedule.at(scene.frame_current)
+    axis = setup.axis if frame_mode.aim_weight > 0.0 else None
     arms, mounted = pose.arms, pose.mounted
     messages = list(setup.messages)
     direction = wrist.DIRECTIONS[settings.wrist_direction]
@@ -533,7 +542,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                     turn = hand @ arm.hand.inverted()
                     tips = [arm.wrist + turn @ v for v in arm.tips.values()] if settings.collider_fingertips else ()
                     start, contact = collider.push(body, arm.wrist, tips)
-                entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hand, hooks)
+                entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hand, hooks, frame_mode)
                 point, hits = magnets.apply(start, entries, barriers_ignore_distance=settings.barriers_ignore_distance,
                                             holding=state.holding.get(side, frozenset()))
                 point = hooks.target(side, arm.wrist, point)
@@ -555,7 +564,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 shift = aim_axis_shift(settings, shapes, sides[FRET_SIDE].hits, mounted.scale)
                 aim_point = aim_target(obj, rig.chains[FRET_SIDE], arms[FRET_SIDE], settings, cal)
                 aimed = aim.aim(mounted, axis[0] + shift, axis[1] + shift, aim_point,
-                                settings.aim_max_swing, settings.aim_weight)
+                                settings.aim_max_swing, frame_mode.aim_weight)
                 wanted = hooks.guitar(aimed.rotation, mounted.default_rotation)
                 following = rotation.slerp(wanted, settings.relax).normalized()
                 settled = settled and rotation_angle(rotation, following) < TOLERANCE_ANGLE
@@ -585,9 +594,9 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
         messages.append(('INFO', f"The neck aim had not settled after {count - 1} iterations: raise Iterations, "
                                  "or lower Relax if the guitar oscillates."))
-    return FrameResult(scene.frame_current, settings.solve_serial, settings.mode, guitar, sides, count, converged,
+    return FrameResult(scene.frame_current, settings.solve_serial, frame_mode.mode, guitar, sides, count, converged,
                        cal.metres_per_bu, messages, aimed, rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand),
-                       constrained)
+                       constrained, frame_mode)
 
 
 def solve(context, rig, iterations=None):

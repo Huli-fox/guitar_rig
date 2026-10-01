@@ -1,5 +1,5 @@
 {
-  "format": 2,
+  "format": 3,
   "name": "Acoustic Guitar",
   "description": "XR Animator's acoustic guitar scene (guitar_collection_v9.1/scene.json)",
   "source": "guitar_collection_v9.1/scene.json and props/acoustic_guitar/acoustic_guitar.glb",
@@ -15,7 +15,7 @@
   "reference": {
     "bounds_min": [-0.358892, -0.19099, -0.060869],
     "bounds_max": [0.680613, 0.198454, 0.052911],
-    "neck": {"joint_x": 0.155663, "nut_x": 0.519489, "width_joint": 0.05562, "width_nut": 0.04576, "center_y": 0.003704, "fret_z": 0.047892, "back_z": 0.0093}
+    "neck": {"joint_x": 0.155663, "nut_x": 0.519489, "width_joint": 0.05562, "width_nut": 0.04576, "center_y": 0.003704, "fret_z": 0.047892, "back_z": 0.0093, "heel_x": 0.171255, "top_joint": 0.046955, "top_nut": 0.04655}
   },
   "landmarks": {
     "NECK_PIVOT": {"position": [4.373398, -2.754097, 6.2819]},

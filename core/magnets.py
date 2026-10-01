@@ -137,6 +137,7 @@ class Hit:
     moved: Vector               # displacement of the hand point
     shift: float = 0.0          # the fingertip move along the plane normal (SAO's E = best - v): -N·shift
     tip: Vector = None          # the lowest fingertip before the pull (fingertip v2)
+    signed: float = None        # planes: the signed distance s, negative behind the plane; lines: d
 
     @property
     def holds(self):
@@ -203,7 +204,7 @@ def pull(point, feature, params, *, holding=False, barriers_ignore_distance=True
         if tip_filter is not None:
             shift = tip_filter(shift)
         moved = moved - feature.normal * shift
-    return point + moved, Hit(point.copy(), n, target, d, reach, w, barrier, moved, shift, nearest)
+    return point + moved, Hit(point.copy(), n, target, d, reach, w, barrier, moved, shift, nearest, s)
 
 
 @dataclass

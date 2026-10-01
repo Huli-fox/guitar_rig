@@ -1,5 +1,5 @@
 """Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mount,
-magnets, solve and bake."""
+magnets, solve (with the range overrides), bake and diagnostics."""
 
 import math
 import textwrap
@@ -7,7 +7,7 @@ import textwrap
 import bpy
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, calibrate, landmarks, magnets, solver
+from ..core import bonemap, calibrate, diagnostics, landmarks, magnets, modes, solver
 from ..core.bonemap import SIDES
 from ..rig import build
 
@@ -17,6 +17,7 @@ GUITAR_AXIS_NAMES = ("X (headstock)", "Y", "Z (strings)")
 CONFIDENCE_ICONS = {'HIGH': 'CHECKMARK', 'MEDIUM': 'INFO', 'LOW': 'ERROR'}
 MOUNT_TEXT = {'NONE': "Not set", 'PRESET': "Preset estimate", 'CAPTURE': "Captured"}
 WRIST_TEXT = {'DEFAULT': "SAO default", 'PRESET': "Preset", 'CAPTURE': "Captured"}
+LANDMARK_TEXT = {'PRESET': "Placed by the preset fit", 'AUTO': "Auto-placed"}
 
 
 def draw_messages(layout, context, messages):
@@ -126,6 +127,14 @@ class GTR_PT_guitar(bpy.types.Panel):
         missing = [role for role in landmarks.ROLES if role.required and role.id not in found]
         header.label(text="Landmarks" + (f" ({len(missing)} missing)" if missing else ""))
         if body is not None:
+            body.operator("gtr.auto_landmarks", icon='SHADERFX')
+            if info.landmark_source != 'NONE':
+                text = LANDMARK_TEXT[info.landmark_source]
+                if info.landmark_source == 'AUTO':
+                    text += f" ({info.landmark_confidence.lower()} confidence)"
+                body.label(text=text, icon=CONFIDENCE_ICONS[info.landmark_confidence]
+                           if info.landmark_source == 'AUTO' else 'INFO')
+                draw_messages(body, context, calibrate.parse_messages(info.landmark_messages))
             col = body.column(align=True)
             for role in landmarks.ROLES:
                 obj = found.get(role.id)
@@ -133,8 +142,9 @@ class GTR_PT_guitar(bpy.types.Panel):
                 text = role.label + ("" if obj is not None else ("  (missing)" if role.required else "  (optional)"))
                 col.operator("gtr.select_landmark", text=text, icon=icon, emboss=False).role = role.id
             if not found:
-                draw_messages(body, context, [('INFO', "Load a preset to place the landmarks, then check them "
-                                                       "on the guitar.")])
+                draw_messages(body, context, [('INFO', "Load a preset to place the landmarks, or Auto-Place them "
+                                                       "on the neck and body the add-on finds, then check them on "
+                                                       "the guitar.")])
 
 
 class GTR_PT_bones(_SubPanel, bpy.types.Panel):
@@ -389,6 +399,29 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
                                      "the mocap plays as before, until you solve a frame."))
 
         layout.prop(settings, "mode", expand=True)
+        header, body = layout.panel("GTR_ranges", default_closed=not len(settings.range_overrides))
+        count = sum(item.enabled for item in settings.range_overrides)
+        header.label(text="Range Overrides" + (f" ({count})" if count else ""))
+        if body is not None:
+            row = body.row()
+            row.template_list("GTR_UL_ranges", "", settings, "range_overrides", settings, "active_range_index",
+                              rows=3)
+            col = row.column(align=True)
+            col.operator("gtr.range_add", text="", icon='ADD')
+            col.operator("gtr.range_remove", text="", icon='REMOVE')
+            frame_mode = modes.Schedule(settings).at(scene.frame_current)
+            text = f"Frame {scene.frame_current}: {frame_mode.mode.title()}"
+            if frame_mode.override != modes.SCENE:
+                text += f" (range {frame_mode.override + 1})"
+            if 0.0 < frame_mode.aim_weight < settings.aim_weight:
+                text += f", neck aim fading ({frame_mode.aim_weight:.2f})"
+            body.label(text=text)
+            if any(item.frame_end < item.frame_start for item in settings.range_overrides):
+                body.label(text="A range ends before it starts: it is ignored", icon='ERROR')
+            draw_messages(body, context, [('INFO', "Each range solves its frames in its mode: the neck aim and the "
+                                                   "fretboard-edge magnet switch as with the mode buttons. Lower "
+                                                   f"ranges win where they overlap. The neck aim fades over "
+                                                   f"{modes.FADE_FRAMES} frames at each change.")])
         header, body = layout.panel("GTR_solve_options", default_closed=True)
         header.label(text="Options")
         if body is not None:
@@ -410,6 +443,11 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
         result = solver.shown_result(scene)
         if result is not None:
             rows = []
+            frame_mode = result.frame_mode
+            if frame_mode is not None and (frame_mode.override != modes.SCENE or len(settings.range_overrides)):
+                text = frame_mode.mode.title() + ("" if frame_mode.override == modes.SCENE
+                                                  else f" (range {frame_mode.override + 1})")
+                rows.append(("Mode", text))
             for side in SIDES:
                 side_result = result.sides[side]
                 moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
@@ -506,6 +544,39 @@ class GTR_PT_bake(_SubPanel, bpy.types.Panel):
                                                      "correct them on the GuitarRefine layer above.")])
 
 
+class GTR_PT_diagnostics(_SubPanel, bpy.types.Panel):
+    bl_idname = "GTR_PT_diagnostics"
+    bl_label = "Diagnostics"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.gtr
+        obj = diagnostics.find(settings)
+        if diagnostics.action_of(obj) is None:
+            draw_messages(layout, context, [('INFO', "Bake to record what the solve did on each frame: the wrist "
+                                                     "corrections, each magnet's distance and weight, the neck "
+                                                     "swing.")])
+            return
+        metric = settings.diagnostics_metric
+        layout.prop(settings, "diagnostics_metric")
+        col = layout.column(align=True)
+        ranked = diagnostics.ranking(obj, metric)
+        if not ranked:
+            col.label(text=f"No frame has any {diagnostics.METRIC_BY_ID[metric][1].lower()}", icon='CHECKMARK')
+        for rank, (frame, value) in enumerate(ranked, 1):
+            op = col.operator("gtr.jump_worst_frame", text=f"Frame {frame}: {diagnostics.format_value(metric, value)}",
+                              icon='TIME' if rank == 1 else 'BLANK1')
+            op.metric = metric
+            op.rank = rank
+        layout.operator("gtr.show_diagnostics", icon='GRAPH')
+        draw_messages(layout, context, [('INFO', f"{obj.name}'s curves hold every frame: each wrist's correction "
+                                                 "(cm) and IK miss (mm), each magnet's distance d (cm, negative "
+                                                 "behind a plane) and weight w, the neck swing and the fretting "
+                                                 "wrist's turn (°). They show the solve, before any Smooth or "
+                                                 "Re-clamp.")])
+
+
 CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_mount, GTR_PT_magnets,
-           GTR_PT_solve, GTR_PT_bake)
+           GTR_PT_solve, GTR_PT_bake, GTR_PT_diagnostics)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

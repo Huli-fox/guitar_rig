@@ -16,7 +16,9 @@ guitar.
 Format 2 (M3) changed two things that files saved in format 1 still carry: a saved wrist `rotation` was SAO's
 offset for its hand-tracking frame, and is now for the hand's T-pose-aligned frame (wrist.py); and magnets saved
 `apply_axis_rot` off, the old default, where hand offsets now follow axis_rot like the neck aim. Format 1 files
-are converted on loading.
+are converted on loading. Format 3 (M5) adds the reference neck's heel and fretboard top line (`heel_x`,
+`top_joint`, `top_nut`), which Auto-Place anchors landmarks on (autoland.py); without them it uses where the neck
+narrows and a level fretboard.
 """
 
 import json
@@ -34,7 +36,7 @@ PRESET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 NON_PRESET_FILES = frozenset({"bone_maps.json"})
 SAO_UNITS_PER_M = 11.0      # 1 MMD unit = 1/11 m
 FIT_WARN_RANGE = (0.5, 2.0)  # per-axis fit scales outside this range get a warning
-FORMAT = 2
+FORMAT = 3
 
 
 class PresetError(ValueError):

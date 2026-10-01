@@ -1,4 +1,5 @@
-"""Rig and solve operators (§4, §6): gtr.build_rig, gtr.clean_rig, gtr.solve_frame and gtr.clear_solve."""
+"""Rig and solve operators (§4, §6): gtr.build_rig, gtr.clean_rig, gtr.solve_frame and gtr.clear_solve; the range
+overrides' gtr.range_add and gtr.range_remove (§5.8)."""
 
 import bpy
 
@@ -133,5 +134,49 @@ class GTR_OT_clear_solve(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (GTR_OT_build_rig, GTR_OT_clean_rig, GTR_OT_solve_frame, GTR_OT_clear_solve)
+RANGE_LENGTH = 48           # frames a new range override spans, from the current frame
+
+
+class GTR_OT_range_add(bpy.types.Operator):
+    """Add a frame range, from the current frame, solved in the other mode than the scene's. Lower ranges win
+    where ranges overlap"""
+
+    bl_idname = "gtr.range_add"
+    bl_label = "Add Range Override"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        scene = context.scene
+        settings = scene.gtr
+        item = settings.range_overrides.add()
+        item.frame_start = scene.frame_current
+        item.frame_end = max(scene.frame_current, min(scene.frame_current + RANGE_LENGTH - 1, scene.frame_end))
+        item.mode = 'ALIGN' if settings.mode == 'FOLLOW' else 'FOLLOW'
+        settings.active_range_index = len(settings.range_overrides) - 1
+        tag_redraw(context)
+        return {'FINISHED'}
+
+
+class GTR_OT_range_remove(bpy.types.Operator):
+    """Remove the active range override"""
+
+    bl_idname = "gtr.range_remove"
+    bl_label = "Remove Range Override"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        settings = context.scene.gtr
+        return 0 <= settings.active_range_index < len(settings.range_overrides)
+
+    def execute(self, context):
+        settings = context.scene.gtr
+        settings.range_overrides.remove(settings.active_range_index)
+        settings.active_range_index = max(0, min(settings.active_range_index, len(settings.range_overrides) - 1))
+        tag_redraw(context)
+        return {'FINISHED'}
+
+
+CLASSES = (GTR_OT_build_rig, GTR_OT_clean_rig, GTR_OT_solve_frame, GTR_OT_clear_solve, GTR_OT_range_add,
+           GTR_OT_range_remove)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

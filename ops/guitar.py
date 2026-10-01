@@ -1,4 +1,5 @@
-"""Guitar operators: frame normalisation and flips (§3.1), presets and landmarks (§3.2)."""
+"""Guitar operators: frame normalisation and flips (§3.1), presets and landmarks (§3.2), automatic landmarks
+(§12)."""
 
 import math
 import os
@@ -9,7 +10,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Matrix, Quaternion, Vector
 
-from ..core import calibrate, guitar_frame, keys, landmarks, mount, presets
+from ..core import autoland, calibrate, guitar_frame, keys, landmarks, mount, presets
 from ..core.magnets import apply_mode
 from .common import report, tag_redraw
 
@@ -135,6 +136,9 @@ def refit(context, root, preset, create=False):
     info.fit_method = fitted.method
     info.fit_scale = fitted.scale * root_metres(context, root)
     info.preset = preset.id
+    if create or existing:
+        info.landmark_source = 'PRESET'
+        info.landmark_messages = ""
     return fitted
 
 
@@ -468,6 +472,50 @@ class GTR_OT_select_landmark(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class GTR_OT_auto_landmarks(bpy.types.Operator):
+    """Find the neck, the heel, the fretboard's tilt and the body on the guitar and place the landmarks on them,
+    keeping the preset's conventions: the string plane's height and the strum line's offsets. GTR_ROOT stays where
+    it is. Check the landmarks afterwards"""
+
+    bl_idname = "gtr.auto_landmarks"
+    bl_label = "Auto-Place"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_root(cls, context)
+
+    def execute(self, context):
+        root = context.scene.gtr.guitar_root
+        meshes = root_meshes(root)
+        if not meshes:
+            self.report({'ERROR'}, "GTR_ROOT has no meshes below it: normalise the guitar first.")
+            return {'CANCELLED'}
+        info = root.gtr_guitar
+        try:
+            preset = preset_for(context, root)
+            context.view_layer.update()
+            geometry = guitar_frame.gather(meshes, context.evaluated_depsgraph_get(), root.matrix_world.inverted())
+            placement = autoland.place(preset, guitar_frame.measure_geometry(geometry), root_metres(context, root),
+                                       info.confidence)
+        except (autoland.AutoError, presets.PresetError) as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        for role, (position, normal) in placement.landmarks.items():
+            landmarks.place(root, role, position, normal)
+        messages = list(placement.messages)
+        for role in landmarks.missing(root):
+            messages.append(('WARNING', f"The {preset.name} preset has no {role.label} landmark: add it by hand."))
+        info.landmark_source = 'AUTO'
+        info.landmark_confidence = placement.confidence
+        info.landmark_messages = calibrate.format_messages(messages)
+        report(self, messages)
+        self.report({'INFO'}, f"Auto-placed {len(placement.landmarks)} landmarks with the {preset.name} preset's "
+                              f"conventions ({placement.confidence.lower()} confidence). Check them.")
+        tag_redraw(context)
+        return {'FINISHED'}
+
+
 CLASSES = (GTR_OT_normalize_frame, GTR_OT_flip_frame, GTR_OT_load_preset, GTR_OT_load_preset_file,
-           GTR_OT_save_preset, GTR_OT_select_landmark)
+           GTR_OT_save_preset, GTR_OT_select_landmark, GTR_OT_auto_landmarks)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

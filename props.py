@@ -15,7 +15,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
                        IntProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
 
-from .core import bonemap, calibrate, filters, magnets, presets
+from .core import bonemap, calibrate, diagnostics, filters, magnets, presets
 
 SIDE_ITEMS = (
     ('L', "Left", "The character's left hand"),
@@ -131,11 +131,13 @@ class GTR_Magnet(PropertyGroup):
 
 
 class GTR_RangeOverride(PropertyGroup):
-    """A frame range solved in another mode (§5.8)."""
+    """A frame range solved in another mode (§5.8, core/modes.py)."""
 
-    frame_start: IntProperty(name="Start", default=1)
-    frame_end: IntProperty(name="End", default=250)
-    mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='ALIGN')
+    enabled: BoolProperty(name="Enabled", default=True)
+    frame_start: IntProperty(name="Start", default=1, description="First frame of the range")
+    frame_end: IntProperty(name="End", default=250, description="Last frame of the range")
+    mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='ALIGN',
+                       description="The mode's switch applies to these frames on top of the scene's settings")
 
 
 def _bone_map_changed(self, context):
@@ -251,6 +253,13 @@ class GTR_Character(PropertyGroup):
     calibration: PointerProperty(type=GTR_Calibration)
 
 
+LANDMARK_CONFIDENCE_ITEMS = (
+    ('HIGH', "High", "The neck, the heel and the body were all found"),
+    ('MEDIUM', "Medium", "A feature was missing or the guitar's proportions are unusual: check the landmarks"),
+    ('LOW', "Low", "The guitar frame or the body is doubtful: check the landmarks"),
+)
+
+
 class GTR_Guitar(PropertyGroup):
     """The guitar frame found by gtr.normalize_frame and the preset fit, stored on GTR_ROOT."""
 
@@ -261,6 +270,13 @@ class GTR_Guitar(PropertyGroup):
                ('MEDIUM', "Medium", "One cue decided, or one of three disagreed"),
                ('LOW', "Low", "The cues disagree or are missing: check the axes")))
     messages: StringProperty()
+    landmark_source: EnumProperty(
+        name="Landmarks", default='NONE',
+        items=(('NONE', "Not Placed", "No landmarks were placed by the add-on"),
+               ('PRESET', "Preset Fit", "Placed by the preset fitted to the guitar's bounds and neck"),
+               ('AUTO', "Auto-Placed", "Placed on the neck, heel and body found on the mesh")))
+    landmark_confidence: EnumProperty(name="Landmark Confidence", items=LANDMARK_CONFIDENCE_ITEMS, default='LOW')
+    landmark_messages: StringProperty()
     length_m: FloatProperty(name="Length (m)")
     neck_found: BoolProperty(name="Neck Found")
     preset: StringProperty(name="Preset", description="Id or file of the preset the landmarks were fitted from")
@@ -472,6 +488,13 @@ class GTR_Settings(PropertyGroup):
         description="Re-clamp re-solves the frames where a hand is further than this into a barrier or the chest "
                     "collider")
     bake_report: StringProperty(name="Bake Report", description="What the last bake, smoothing or re-clamp did")
+
+    # Diagnostics (§10.6)
+    diagnostics: PointerProperty(
+        name="Diagnostics", type=bpy.types.Object,
+        description="The empty whose animated custom properties hold what the last bake's solve did on each frame")
+    diagnostics_metric: EnumProperty(name="Measure", items=[metric[:3] for metric in diagnostics.METRICS],
+                                     description="What the worst frames are ranked by")
 
     # Helper rig and Solve Frame (§4, §6)
     rig_collection: PointerProperty(name="Rig Collection", type=bpy.types.Collection,

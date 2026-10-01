@@ -114,13 +114,44 @@ def _low_poly_neck(bm):
     bmesh.ops.split_edges(bm, edges=bm.edges[:])
 
 
-def build(name="Guitar", strings=True, joined=False, matrix=None, parent_scale=None, low_poly=False):
+HORN_END_X = 0.12               # cutaway horns beside the neck reach this far toward the headstock
+
+
+def _horns(bm):
+    """Two horns beside the neck, like a double-cutaway electric: the body outline goes on past the heel."""
+    for sy in (-1.0, 1.0):
+        y0, y1 = sorted((sy * 0.045, sy * 0.12))
+        _box(bm, (-0.05, y0, BODY_BACK_Z), (HORN_END_X, y1, 0.0))
+
+
+TILTED = ("Neck", "Headstock", "Strings")
+
+
+def _tilted(build_part, angle):
+    """`build_part` with its vertices turned about the Y axis through the fretboard top at the joint, so that the
+    fretboard rises toward the headstock by `angle`."""
+    def build_tilted(bm):
+        start = len(bm.verts)
+        build_part(bm)
+        bm.verts.ensure_lookup_table()
+        pivot = Vector((0.0, 0.0, FRET_Z))
+        bmesh.ops.rotate(bm, verts=bm.verts[start:], cent=pivot, matrix=Matrix.Rotation(-angle, 3, 'Y'))
+    return build_tilted
+
+
+def build(name="Guitar", strings=True, joined=False, matrix=None, parent_scale=None, low_poly=False, horns=False,
+          neck_tilt=0.0):
     """Guitar objects in the scene: one per part (joined: one mesh), under a scaled empty if `parent_scale`.
 
-    `matrix` places the guitar frame in world space. Returns (objects, the empty or None).
+    `matrix` places the guitar frame in world space; `horns` adds cutaway horns; `neck_tilt` (radians) tilts the
+    neck, headstock and strings up toward the headstock. Returns (objects, the empty or None).
     """
-    parts = [key for key in PARTS if strings or key != "Strings"]
-    build_part = dict(PARTS, Neck=_low_poly_neck) if low_poly else PARTS
+    parts = [key for key in PARTS if strings or key != "Strings"] + (["Horns"] if horns else [])
+    build_part = dict(PARTS, Horns=_horns)
+    if low_poly:
+        build_part["Neck"] = _low_poly_neck
+    if neck_tilt:
+        build_part.update({key: _tilted(build_part[key], neck_tilt) for key in TILTED})
     matrix = Matrix.Identity(4) if matrix is None else matrix
     collection = bpy.context.scene.collection
     if joined:

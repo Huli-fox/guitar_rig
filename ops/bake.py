@@ -1,13 +1,14 @@
 """Bake operators (§8, §9): gtr.bake and gtr.reclamp go through the frames one by one, as modal operators with a
 progress bar when invoked from the UI (Esc cancels and changes nothing) and to the end when called from a script;
-gtr.smooth_bake and gtr.remove_bake."""
+gtr.smooth_bake and gtr.remove_bake. Diagnostics (§10.6): gtr.jump_worst_frame and gtr.show_diagnostics."""
 
 import time
 import traceback
 
 import bpy
+from bpy.props import EnumProperty, IntProperty
 
-from ..core import baker, keys, solver
+from ..core import baker, diagnostics, keys, solver
 from ..rig import build
 from .common import report, tag_redraw
 from .rig import poll_solve
@@ -190,5 +191,75 @@ class GTR_OT_remove_bake(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (GTR_OT_bake, GTR_OT_reclamp, GTR_OT_smooth_bake, GTR_OT_remove_bake)
+def _poll_diagnostics(cls, context):
+    if diagnostics.action_of(diagnostics.find(context.scene.gtr)) is None:
+        cls.poll_message_set("Bake first: the bake records the diagnostics")
+        return False
+    return True
+
+
+class GTR_OT_jump_worst_frame(bpy.types.Operator):
+    """Go to the frame where the last bake's solve was worst by the chosen measure"""
+
+    bl_idname = "gtr.jump_worst_frame"
+    bl_label = "Jump to Worst Frame"
+    bl_options = {'REGISTER'}
+
+    metric: EnumProperty(name="Measure", items=[metric[:3] for metric in diagnostics.METRICS])
+    rank: IntProperty(name="Rank", default=1, min=1, description="1 for the worst frame, 2 for the next, and so on")
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_diagnostics(cls, context)
+
+    @classmethod
+    def description(cls, context, properties):
+        _id, name, text, _unit = diagnostics.METRIC_BY_ID[properties.metric]
+        which = "the worst frame" if properties.rank == 1 else f"worst frame #{properties.rank}"
+        return f"Go to {which} by {name.lower()}: {text[0].lower()}{text[1:]}"
+
+    def execute(self, context):
+        scene = context.scene
+        ranked = diagnostics.ranking(diagnostics.find(scene.gtr), self.metric, self.rank)
+        name = diagnostics.METRIC_BY_ID[self.metric][1].lower()
+        if len(ranked) < self.rank:
+            self.report({'INFO'}, f"No frame of the bake has a {name} above 0." if not ranked else
+                                  f"Only {len(ranked)} frames have a {name} above 0.")
+            return {'CANCELLED'}
+        frame, value = ranked[self.rank - 1]
+        scene.frame_set(frame)
+        self.report({'INFO'}, f"Frame {frame}: {name} {diagnostics.format_value(self.metric, value)}.")
+        return {'FINISHED'}
+
+
+class GTR_OT_show_diagnostics(bpy.types.Operator):
+    """Select the GTR_Diagnostics empty, whose curves show what the solve did on each frame in the Graph Editor"""
+
+    bl_idname = "gtr.show_diagnostics"
+    bl_label = "Select Curves"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'OBJECT':
+            cls.poll_message_set("Switch to Object Mode first")
+            return False
+        return _poll_diagnostics(cls, context)
+
+    def execute(self, context):
+        obj = diagnostics.find(context.scene.gtr)
+        if not obj.visible_get():
+            self.report({'WARNING'}, f"{obj.name} is hidden or in an excluded collection: unhide it to see its "
+                                     "curves.")
+            return {'CANCELLED'}
+        for other in context.selected_objects:
+            other.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        self.report({'INFO'}, f"Selected {obj.name}: its curves are in the Graph Editor.")
+        return {'FINISHED'}
+
+
+CLASSES = (GTR_OT_bake, GTR_OT_reclamp, GTR_OT_smooth_bake, GTR_OT_remove_bake, GTR_OT_jump_worst_frame,
+           GTR_OT_show_diagnostics)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

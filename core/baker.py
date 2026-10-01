@@ -24,7 +24,10 @@ that arm again from the baked pose, keeping the baked hand rotation; only those 
 GuitarRefine layer on the armature is muted meanwhile, as the keys go into the bake strip under it.
 
 Remove Bake takes the add-on's tracks and actions away and puts back what the bake changed: the pushed-down
-actions and the static values (keys.py), and GTR_ROOT's parent.
+actions and the static values (keys.py), and GTR_ROOT's parent. It removes the bake's diagnostics as well.
+
+A bake also records what the solve did on each frame (diagnostics.py) and keys it on the GTR_Diagnostics empty.
+Range overrides (modes.py) choose each frame's mode; where the mode changes, the bake starts its SolveState afresh.
 """
 
 import math
@@ -35,7 +38,7 @@ import bpy
 import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import bake, calibrate, collider, filters, keys, magnets, solver
+from . import bake, calibrate, collider, diagnostics, filters, keys, magnets, modes, solver
 from .bonemap import SIDES
 
 ROOT_PARENT_PROP = "gtr_bake_parent"    # on GTR_ROOT: its parent before the first bake
@@ -351,6 +354,7 @@ class BakeJob(Job):
         self.wrists = {side: np.empty((count, 3)) for side in SIDES}
         self.state = solver.SolveState.new(setup.fps)
         self.stats = Stats()
+        self.diagnostics = diagnostics.Recorder(self.frames, settings.magnets)
         self.index = 0
         self.started = time.perf_counter()
         keys.record_static(obj, solved)
@@ -361,6 +365,8 @@ class BakeJob(Job):
         i, frame = self.index, self.frames[self.index]
         rig, setup = self.rig, self.setup
         bones = rig.armature.pose.bones
+        if i > 0 and setup.schedule.at(frame).run_start:
+            self.state = solver.SolveState.new(setup.fps)       # another mode's magnets: no history (modes.py)
         rig.set_active(False)
         context.scene.frame_set(frame)
         pose = solver.sample_pose(context, rig, setup, update=False)
@@ -376,6 +382,7 @@ class BakeJob(Job):
             self.wrists[side][i] = side_result.wrist
         rig.set_active(False)
         self.stats.note(frame, result, setup.cal.metres_per_bu)
+        self.diagnostics.note(i, result)
         self.index += 1
 
     def finish(self, context):
@@ -396,6 +403,7 @@ class BakeJob(Job):
         for owner, role, action, channels in ((obj, keys.ARM, arm_action, arm_channels),
                                               (root, keys.GUITAR, guitar_action, guitar_channels)):
             self.messages += place(owner, role, action, channels.slot, self.start, self.end)
+        diagnostics.write(settings, self.diagnostics, root.users_collection or (context.scene.collection,))
         error, error_frame = self._verify(context)
         self.temp.restore()
 
@@ -486,6 +494,12 @@ class BakeJob(Job):
                 parts.append(f"{text} acted on {number} frames")
         if parts:
             lines.append(('INFO', "; ".join(parts).capitalize() + "."))
+        runs = self.setup.schedule.runs(self.start, self.end)
+        if len(runs) > 1 or runs[0][2].override != modes.SCENE:
+            text = ", ".join(f"{first}-{last} {mode.mode.title()}" + ("" if mode.override == modes.SCENE else "*")
+                             for first, last, mode in runs)
+            lines.append(('INFO', f"Modes: {text} (* range override). The filters restarted at the {len(runs) - 1} "
+                                  f"changes, where the neck aim fades over {modes.FADE_FRAMES} frames."))
         if stats.unconverged:
             lines.append(('INFO', f"The neck aim did not settle on {len(stats.unconverged)} frames "
                                   f"({_fmt_frames(stats.unconverged)}): raise Iterations or lower Relax."))
@@ -607,9 +621,9 @@ def smooth(context):
 
 # Re-clamp ------------------------------------------------------------------------------------------------------
 
-def clamp_targets(settings, setup, pose, guitar):
+def clamp_targets(settings, setup, pose, guitar, frame_mode=None):
     """{side: (wrist, push)}: each FK wrist of `pose` pushed out of the chest collider and of the barriers, with
-    the distance it moved."""
+    the distance it moved. `frame_mode`: the frame's modes.FrameMode."""
     cal = setup.cal
     body = collider.capsule(settings, cal, *pose.chest)
     out = {}
@@ -618,7 +632,7 @@ def clamp_targets(settings, setup, pose, guitar):
         if body is not None and side in settings.collider_hands:
             tips = [arm.wrist + v for v in arm.tips.values()] if settings.collider_fingertips else ()
             wrist, _ = collider.push(body, wrist, tips)
-        for entry in solver.magnet_entries(settings, cal, side, arm, guitar, setup.shapes):
+        for entry in solver.magnet_entries(settings, cal, side, arm, guitar, setup.shapes, frame_mode=frame_mode):
             if not magnets.is_barrier(entry):
                 continue
             if not settings.barriers_ignore_distance:
@@ -671,7 +685,8 @@ class ReclampJob(Job):
         location, rotation, scale = setup.root.matrix_world.decompose()
         guitar = magnets.GuitarPose(location, rotation, pose.mounted.default_rotation, scale)
         targets = {}
-        for side, (wrist, push) in clamp_targets(context.scene.gtr, setup, pose, guitar).items():
+        for side, (wrist, push) in clamp_targets(context.scene.gtr, setup, pose, guitar,
+                                                 setup.schedule.at(frame)).items():
             if push > self.tolerance:
                 targets[side] = wrist
                 self.pushes[side][i] = push
@@ -806,6 +821,7 @@ def remove_bake(context):
         for action in refine:
             action.use_fake_user = True
             kept.append(action.name)
+    diagnostics.remove(settings)
     scene.frame_set(scene.frame_current, subframe=scene.frame_subframe)
     messages = [('INFO', f"Removed the bake ({removed} actions).")]
     if kept:

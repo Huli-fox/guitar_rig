@@ -37,6 +37,9 @@ HEADSTOCK_MIN_SAMPLES = 100
 CUE_MIN = {'strings': 0.1, 'neck_offset': 0.08, 'headstock': 0.1}
 CUE_TITLES = {'strings': "strings", 'neck_offset': "neck position", 'headstock': "headstock set-back"}
 HEADSTOCK_MIN_RATIO = 1.5
+HEEL_STRIP = 0.4            # the heel search looks at points within this share of the neck width of its middle
+HEEL_DROP = 0.5             # the heel starts where the neck's back drops this share of the way to the body back
+SLICE_MIN_SAMPLES = 5       # slices with fewer samples than this are left out of the neck lines
 
 
 class FrameError(ValueError):
@@ -71,7 +74,9 @@ class Samples:
 
 @dataclass
 class Neck:
-    """Neck measurements in frame coordinates. The joint is the body end, the nut the headstock end."""
+    """Neck measurements in frame coordinates. The joint is the body end of the narrow part of the slice profile,
+    the nut the headstock end. The heel is where the body starts under the neck: on guitars with cutaways it is
+    well inside the body outline, past the joint; None when no body was found under the neck."""
     joint_x: float
     nut_x: float
     width_joint: float
@@ -79,6 +84,9 @@ class Neck:
     center_y: float
     fret_z: float               # fretboard top (95th percentile of the neck's Z)
     back_z: float               # neck back (5th percentile)
+    heel_x: float = None
+    top_joint: float = None     # the fretboard top line (each slice's 95th percentile of Z) at the joint...
+    top_nut: float = None       # ...and at the nut; None in measurements saved before M5
 
     @property
     def length(self):
@@ -92,8 +100,32 @@ class Neck:
     def thickness(self):
         return self.fret_z - self.back_z
 
+    def _along(self, x, at_joint, at_nut):
+        """Linear between the values at the joint and the nut, extended beyond them."""
+        t = (x - self.joint_x) / max(self.length, 1e-12)
+        return at_joint + (at_nut - at_joint) * t
+
+    def width_at(self, x):
+        return self._along(x, self.width_joint, self.width_nut)
+
+    def edge_at(self, x):
+        """Y of the neck's lower (-Y) edge at `x`."""
+        return self.center_y - 0.5 * self.width_at(x)
+
+    def top_at(self, x):
+        """Z of the fretboard top at `x` (fret_z everywhere for measurements without the top line)."""
+        if self.top_joint is None or self.top_nut is None:
+            return self.fret_z
+        return self._along(x, self.top_joint, self.top_nut)
+
+    @property
+    def fret_slope(self):
+        """dZ/dX of the fretboard top along the neck."""
+        return (self.top_at(self.nut_x) - self.top_at(self.joint_x)) / max(self.length, 1e-12)
+
     def as_dict(self):
-        return {key: float(getattr(self, key)) for key in self.__dataclass_fields__}
+        return {key: float(value) for key in self.__dataclass_fields__
+                if (value := getattr(self, key)) is not None}
 
     def scaled(self, factor):
         return Neck(**{key: value * factor for key, value in self.as_dict().items()})
@@ -416,6 +448,63 @@ def find_neck(prof):
     return start + s, start + e
 
 
+def _robust_line(x, y, tolerance):
+    """(slope, intercept) of a least-squares line through (x, y), refitted without the points further than
+    `tolerance` from the first fit."""
+    slope, intercept = np.polyfit(x, y, 1)
+    keep = np.abs(y - (intercept + slope * x)) <= tolerance
+    if keep.sum() >= 3:
+        slope, intercept = np.polyfit(x[keep], y[keep], 1)
+    return float(slope), float(intercept)
+
+
+def _top_line(coords, prof, span, neck):
+    """(top at the joint, top at the nut): a line through the 95th percentile of Z in each neck slice, or
+    (None, None) when too few slices have samples."""
+    xs, tops = [], []
+    for i in range(span[0], span[1] + 1):
+        z = coords[prof.index == i, 2]
+        if len(z) >= SLICE_MIN_SAMPLES:
+            xs.append(prof.x_of(i + 0.5))
+            tops.append(np.percentile(z, 95.0))
+    if len(xs) < 3:
+        return None, None
+    slope, intercept = _robust_line(np.array(xs), np.array(tops), 0.1 * neck.thickness)
+    return intercept + slope * neck.joint_x, intercept + slope * neck.nut_x
+
+
+def find_heel(coords, prof, span, neck):
+    """X where the body starts under the neck, or None.
+
+    In each slice, the lowest point of a strip along the middle of the neck is the neck's back. Going from the
+    middle of the neck toward the body, the heel is where that point drops halfway (HEEL_DROP) from the neck's
+    back (the median over the neck's headstock half) to the lowest point of the guitar, for two slices in a row:
+    the heel of a set or glued neck, or the body under a bolt-on neck. That is where SAO puts its neck/body
+    barrier, also on guitars with cutaways, whose narrow part starts well before the body does. A drop measured
+    against the body depth, not the neck thickness, passes over necks whose back slopes toward the heel.
+    """
+    first, last = span
+    lowest = np.full(len(prof.count), np.nan)
+    for i in range(0, last + 1):
+        x = prof.x_of(i + 0.5)
+        points = coords[prof.index == i]
+        strip = points[np.abs(points[:, 1] - neck.center_y) < HEEL_STRIP * neck.width_at(x)]
+        if len(strip) >= SLICE_MIN_SAMPLES:
+            lowest[i] = strip[:, 2].min()
+    middle = (first + last) // 2
+    back = lowest[middle:last + 1]
+    back = back[~np.isnan(back)]
+    if not len(back):
+        return None
+    back = float(np.median(back))
+    threshold = back - HEEL_DROP * (back - float(coords[:, 2].min()))
+    below = lowest < threshold          # NaN (no samples) compares False
+    for i in range(middle, 0, -1):
+        if below[i] and below[i - 1]:
+            return float(prof.x_of(i + 1))
+    return None
+
+
 def neck_measurements(coords, prof, span):
     first, last = span
     in_neck = (prof.index >= first) & (prof.index <= last)
@@ -424,12 +513,15 @@ def neck_measurements(coords, prof, span):
     slope, intercept = np.polyfit(idx, width, 1)
     z = coords[in_neck, 2]
     mid_y = 0.5 * (prof.y_lo[idx] + prof.y_hi[idx])
-    return Neck(
+    neck = Neck(
         joint_x=float(prof.x_of(first)), nut_x=float(prof.x_of(last + 1)),
         width_joint=float(intercept + slope * first), width_nut=float(intercept + slope * last),
         center_y=float(np.mean(mid_y)),
         fret_z=float(np.percentile(z, 95.0)), back_z=float(np.percentile(z, 5.0)),
     )
+    neck.top_joint, neck.top_nut = _top_line(coords, prof, span, neck)
+    neck.heel_x = find_heel(coords, prof, span, neck)
+    return neck
 
 
 def measure(samples, axes=None):

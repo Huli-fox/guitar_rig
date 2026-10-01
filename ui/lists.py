@@ -1,4 +1,4 @@
-"""UI lists: the magnets (§10)."""
+"""UI lists: the magnets and the range overrides (§10)."""
 
 import bpy
 
@@ -16,5 +16,19 @@ class GTR_UL_magnets(bpy.types.UIList):
         row.label(text=("Barrier  " if barrier else "") + ("Left" if item.hand == 'L' else "Right"))
 
 
-CLASSES = (GTR_UL_magnets,)
+class GTR_UL_ranges(bpy.types.UIList):
+    """Frame ranges solved in another mode; lower entries win where ranges overlap."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0):
+        row = layout.row(align=True)
+        row.prop(item, "enabled", text="")
+        sub = row.row(align=True)
+        sub.active = item.enabled
+        sub.alert = item.frame_end < item.frame_start
+        sub.prop(item, "frame_start", text="")
+        sub.prop(item, "frame_end", text="")
+        sub.prop(item, "mode", text="")
+
+
+CLASSES = (GTR_UL_magnets, GTR_UL_ranges)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)
