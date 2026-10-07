@@ -1,6 +1,6 @@
-"""Bake operators (§8, §9): gtr.bake and gtr.reclamp go through the frames one by one, as modal operators with a
-progress bar when invoked from the UI (Esc cancels and changes nothing) and to the end when called from a script;
-gtr.smooth_bake and gtr.remove_bake. Diagnostics (§10.6): gtr.jump_worst_frame and gtr.show_diagnostics."""
+"""Bake operators (§8, §9): gtr.bake, gtr.reclamp and gtr.smooth_bake go through the frames one by one, as modal
+operators with a progress bar when invoked from the UI (Esc cancels and changes nothing) and to the end when called
+from a script; gtr.remove_bake. Diagnostics (§10.6): gtr.jump_worst_frame and gtr.show_diagnostics."""
 
 import time
 import traceback
@@ -139,9 +139,10 @@ class GTR_OT_reclamp(_JobOperator, bpy.types.Operator):
         return baker.ReclampJob(context, rig)
 
 
-class GTR_OT_smooth_bake(bpy.types.Operator):
-    """Low-pass the baked arm and guitar keys, forward and backward so nothing lags. Re-clamp afterwards to
-    restore the contacts"""
+class GTR_OT_smooth_bake(_JobOperator, bpy.types.Operator):
+    """Low-pass the baked arm and guitar keys, forward and backward so nothing lags; in Correction mode only what
+    the solve changed in the arms, so their quick motion stays. Re-clamp afterwards to restore the contacts. Esc
+    cancels"""
 
     bl_idname = "gtr.smooth_bake"
     bl_label = "Smooth"
@@ -155,15 +156,8 @@ class GTR_OT_smooth_bake(bpy.types.Operator):
             return False
         return True
 
-    def execute(self, context):
-        try:
-            messages = baker.smooth(context)
-        except baker.BakeError as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-        report(self, messages)
-        tag_redraw(context)
-        return {'FINISHED'}
+    def make_job(self, context, rig):
+        return baker.SmoothJob(context, rig)
 
 
 class GTR_OT_remove_bake(bpy.types.Operator):

@@ -26,9 +26,10 @@ def reset_scene():
     for action in list(bpy.data.actions):
         bpy.data.actions.remove(action)
     settings = bpy.context.scene.gtr
-    for key in settings.bl_rna.properties.keys():
-        if key not in {"rna_type", "name"}:
-            settings.property_unset(key)
+    for group in (settings, settings.prep):
+        for key in group.bl_rna.properties.keys():
+            if key not in {"rna_type", "name", "prep"}:
+                group.property_unset(key)
     settings.magnets.clear()
 
 

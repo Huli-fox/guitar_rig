@@ -49,7 +49,31 @@ Each panel greys out or explains what is missing until the step before it is don
 
    If forward points backward, use **Flip Facing**.
 
-### 2. Guitar
+### 2. Prep (optional)
+
+Capture and filtering smooth away some of a performance: the picking arm hardly swings, the strokes are small and slow, and the fretting fingers press and release lazily. **Prep** touches up the mocap before the bake to restore some of that. It needs only the calibrated character, not the guitar, so you can judge the result on the bare character.
+
+This version supports MMD models imported with MMD Tools (bones are found by their Japanese names) and right-handed players.
+
+1. Set **Intensity** in the **Prep** panel. It scales every tool toward doing nothing (0) or past its strength (above 1). The per-tool strengths are under **Tools**.
+2. Click **Apply Prep**. It reads your original mocap and writes the result to a **GuitarPrep** NLA layer; Esc cancels. The report gives the picking wrist's travel, the hand's turn speed and the finger press times, before and after.
+3. Scrub the timeline. **Show Original** mutes the layer for a before-and-after comparison.
+4. Change the settings and apply again as often as you like: Apply Prep always starts from the original mocap, so the strengths never add up.
+
+The tools:
+
+| Tool | What it does | Default |
+|---|---|---|
+| Range | Makes the quick part of a motion larger and keeps the posture: the picking hand relative to the forearm, and each fretting finger joint. Quick presses overshoot slightly. | Picking wrist ×1.5, fretting fingers ×1.3, above 1 Hz |
+| Snap | Makes each move steeper, keeping where it starts, ends and crosses half way: the picking strokes and the fretting fingers' presses. **Picking Fingers** also snaps the picking hand's fingers, for fingerpicking. | Strokes 2, fretting fingers 2, picking fingers off |
+| Swing | Adds the arm swing a strum makes: the wrist follows the pick point's stroke, turned at the shoulder and the elbow, the arm leading by a frame. | 1× the stroke, elbow share 0.7 |
+| Roll | Moves the forearm roll from the wrist onto the forearm twist bone (手捩) on both hands, so the forearm skin twists as it should. The hands keep their pose. | On |
+
+The fretting fingers stay within the range they have in the mocap plus **Joint Margin** (5°).
+
+The solve and the bake read the GuitarPrep layer as the mocap. If you apply Prep after a bake, the report and the panel ask you to bake again. **Remove Prep** (the trash icon) removes the layer and leaves the bake.
+
+### 3. Guitar
 
 1. Select the guitar meshes, or the empty they hang from, and click **Guitar > Normalise Frame**.
    - It creates `GTR_ROOT`, with +X along the neck toward the headstock and +Z out of the strings, and parents the guitar to it.
@@ -59,13 +83,13 @@ Each panel greys out or explains what is missing until the step before it is don
 4. Click **Landmarks > Auto-Place** (see [Auto-placed landmarks](#auto-placed-landmarks)). This is recommended when your guitar differs from the preset's, for example an electric with cutaways or a tilted neck.
 5. Check the landmarks. Click an entry in the checklist to select its empty, or to add it at the 3D cursor if it is missing. Move or rotate the empties as needed. For a plane, the empty's local Z axis is the plane's normal.
 
-### 3. Mount and wrist
+### 4. Mount and wrist
 
 1. Go to a frame where the character holds the guitar in a typical pose.
 2. Click **Place on Mount**, move and rotate `GTR_ROOT` until the guitar sits right on the body, and click **Capture Mount**. This step is required: the preset's mount is only an estimate.
 3. Optionally, pose a good fretting frame and click **Wrist > Capture Wrist Offset**. **Wrist Blend** sets how much of that rotation the fretting wrist takes.
 
-### 4. Solve and tune
+### 5. Solve and tune
 
 1. Click **Solve > Build Rig**. It adds an IK and a rotation constraint to each arm, plus their helper empties in a `GuitarRig` collection. The constraints stay off, so your animation plays as before.
 2. Go to a problem frame and click **Solve Frame**. The arms show the solve until the frame changes; **Show Mocap** switches it off.
@@ -78,7 +102,7 @@ Each panel greys out or explains what is missing until the step before it is don
    Use **Range Overrides** to solve some frames in the other mode.
 4. Tune the magnets in the **Magnets** panel if needed. Switch on the **Chest Collider** if the hands pass through the torso.
 
-### 5. Bake and refine
+### 6. Bake and refine
 
 1. Click **Bake**. It solves every frame of the range with a progress bar; Esc cancels and leaves everything as it was. The report gives:
    - the speed;
@@ -87,7 +111,7 @@ Each panel greys out or explains what is missing until the step before it is don
    - how closely the played-back keys match the solve.
 2. Check the worst frames in **Diagnostics**. Fix what is wrong (landmarks, magnets, mode ranges) and bake again.
 3. Optional post-processing:
-   - **Smooth** low-passes the baked keys: 6 Hz for the arms and 3 Hz for the guitar by default.
+   - **Smooth** low-passes the bake: 6 Hz for the arms and 3 Hz for the guitar by default. In **Correction** mode (the default) it smooths only what the solve changed in the arms, so the quick motion of the mocap and the prep stays; **Keys** smooths the arm keys themselves.
    - **Re-clamp** then pushes any hand that smoothing moved into a barrier or the chest collider back out, re-keying only those frames.
 4. Refine the result on the **GuitarRefine** NLA layer:
    - chord shapes and fretting fingers;
@@ -99,6 +123,7 @@ Each panel greys out or explains what is missing until the step before it is don
 
 On both the character and `GTR_ROOT`, from the bottom of the NLA up:
 - your own tracks, with the active action pushed down into a track of its own;
+- **GuitarPrep** (the character only, after Apply Prep): the touched-up channels, with blend Replace and one key per frame over the bake range;
 - **GuitarBake**: the solved arm chains, or the guitar, with blend Replace and one key per frame;
 - **GuitarRefine**: an empty Combine layer for your corrections. A re-bake replaces only GuitarBake, so your refine work survives.
 
@@ -177,6 +202,8 @@ The acoustic preset's magnets, as in SAO:
 - **Right hand:** the strum line, the strum position and the string barrier.
 - **Left hand:** the fretboard plane, the neck/body barrier and the fretboard edge.
 
+A magnet that pulls the wrist toward a line shrinks the wrist's distance from it, so it would take back most of a stroke. **Pass-Through** (in the Magnets panel, on for the right hand) lets the quick wrist motion through: the magnets act on the slow part of the wrist's path relative to the chest (below 1 Hz by default), the strokes are added back on top, and the barriers and the chest collider then push the result out again. It is off for the fretting hand, which the fretboard magnets must hold. The bake reads every frame's wrist first for this; Solve Frame reads 2 s each side of its frame. The diagnostics show it as `R pass-through (cm)`.
+
 The **Chest Collider** is a capsule around the torso that pushes the wrists and fingertips forward before the magnets act. It is off by default.
 
 ## Modes and range overrides
@@ -204,6 +231,7 @@ Every bake records what the solve did on each frame. The values are keyed as ani
 | `L`/`R wrist correction (cm)` | How far the collider, magnets and reach clamp moved the wrist target from the mocap wrist |
 | `L`/`R IK miss (mm)` | How far the solved wrist ended from its target |
 | `L`/`R chest collider (cm)` | The collider's push (only when the collider is on) |
+| `L`/`R pass-through (cm)` | The quick wrist motion that passed through the magnets (pass-through hands only) |
 | `L`/`R <magnet> d (cm)` | The hand point's distance from the magnet. For planes it is signed: negative means behind the plane. |
 | `L`/`R <magnet> w` | The magnet's weight: 1 is a full snap or a barrier clamp |
 | `neck swing (°)`, `fretting wrist turn (°)` | How far the guitar and the fretting wrist turned |
@@ -233,6 +261,9 @@ The diagnostics describe the solve, not later Smooth or Re-clamp passes. Remove 
 | The guitar sits in the torso | Capture the mount again, or switch on the Chest Collider |
 | Character frame arrows are wrong | **Flip Facing**, or the bone map's shoulders and head |
 | Landmarks jumped after Flip or Load Preset | Those operators place them by the preset fit; run Auto-Place again |
+| "Prep supports MMD models" | Prep finds bones by their MMD names (人指１, 手捩 …). Import the model with MMD Tools. |
+| The forearm twists badly when the strokes are boosted | Keep **Roll to Twist Bone** on. Without a 手捩 bone, Roll is off: lower the picking wrist's Range. |
+| The prep's strokes disappear after Smooth | Use Smooth **Correction**, not **Keys** |
 
 ## For developers
 
@@ -243,9 +274,10 @@ blender -b --factory-startup --python-exit-code 1 --python tests/run.py -- [-v] 
 ```
 
 - The tests that compare with SAO run when its `guitar_collection_v9.1` folder sits next to the add-on folder. Without it, they are skipped.
+- The prep test on a real model runs when `GTR_TEST_PMX` and `GTR_TEST_VMD` point at an MMD model and motion (example.pmx and part1.vmd for the numbers it checks) and the MMD Tools extension is installed.
 - `tools/measure_reference.py` measures a preset's reference prop and writes the preset's `frame` and `reference` entries.
 - The code is laid out as follows:
-  - `core/`: the maths and the solve, testable without the UI;
+  - `core/`: the maths and the solve, testable without the UI (`prep.py` and `prepjob.py` are the mocap prep);
   - `ops/`: the operators;
   - `ui/`: the panels, lists and viewport overlay;
   - `rig/`: the helper rig;

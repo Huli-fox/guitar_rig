@@ -44,6 +44,14 @@ SIDE_JOINTS = {
     "ring_intermediate": (0.832, 1.40, -0.022),
     "ring_distal": (0.860, 1.40, -0.022),
     "ring_tip": (0.881, 1.40, -0.022),
+    "little_proximal": (0.778, 1.40, -0.040),
+    "little_intermediate": (0.813, 1.40, -0.040),
+    "little_distal": (0.835, 1.40, -0.040),
+    "little_tip": (0.853, 1.40, -0.040),
+    "thumb_metacarpal": (0.715, 1.392, 0.020),
+    "thumb_proximal": (0.742, 1.386, 0.038),
+    "thumb_distal": (0.768, 1.382, 0.050),
+    "thumb_tip": (0.790, 1.380, 0.057),
     "thigh": (0.09, 0.95, 0.0),
     "knee": (0.09, 0.52, 0.01),
     "ankle": (0.09, 0.08, -0.02),
@@ -255,8 +263,10 @@ def rigify(name="Rigify"):
 
 
 def mmd(name="MMD", a_pose=math.radians(35.0), suffix=False):
-    """MMD model (mmd_tools import): Japanese names, A-pose, arm and wrist twist bones, fingertip bones.
-    With `suffix`, names use mmd_tools' L/R renaming (腕.L instead of 左腕)."""
+    """MMD model (mmd_tools import): Japanese names, A-pose, arm and wrist twist bones, five fingers with their
+    tip bones and the semi-standard 親指０. As mmd_tools leaves it, the wrist twist bone 手捩 points along the
+    armature's +Y, not along the forearm, and the wrist is not connected to it. With `suffix`, names use mmd_tools'
+    L/R renaming (腕.L instead of 左腕)."""
     b = RigBuilder(name, a_pose=a_pose)
     b.add("センター", b.point(0.0, 0.8, 0.0), b.point(0.0, 0.9, 0.0))
     b.add("下半身", "hips", b.point(0.0, 0.9, 0.0), "センター")
@@ -271,14 +281,20 @@ def mmd(name="MMD", a_pose=math.radians(35.0), suffix=False):
         b.add(n("腕"), ("upper_arm", side), ("forearm", side), n("肩"), True)
         b.add(n("腕捩"), ("upper_arm_mid", side), ("forearm", side), n("腕"))
         b.add(n("ひじ"), ("forearm", side), ("hand", side), n("腕捩"), True)
-        b.add(n("手捩"), ("forearm_mid", side), ("hand", side), n("ひじ"))
-        b.add(n("手首"), ("hand", side), ("hand_end", side), n("手捩"), True)
-        for f, jf in (("index", "人指"), ("middle", "中指"), ("ring", "薬指")):
+        twist = b.joint("forearm_mid", side)
+        b.add(n("手捩"), twist, twist + Vector((0.0, 0.04, 0.0)), n("ひじ"))
+        b.add(n("手首"), ("hand", side), ("hand_end", side), n("手捩"))
+        for f, jf in (("index", "人指"), ("middle", "中指"), ("ring", "薬指"), ("little", "小指")):
             names = [n(jf + digit) for digit in "１２３"]
             b.add(names[0], (f"{f}_proximal", side), (f"{f}_intermediate", side), n("手首"))
             b.add(names[1], (f"{f}_intermediate", side), (f"{f}_distal", side), names[0], True)
             b.add(names[2], (f"{f}_distal", side), (f"{f}_tip", side), names[1], True)
             b.add(n(jf + "先"), (f"{f}_tip", side), finger_tip_extension(b, f, side), names[2], True)
+        names = [n("親指" + digit) for digit in "０１２"]
+        b.add(names[0], ("thumb_metacarpal", side), ("thumb_proximal", side), n("手首"))
+        b.add(names[1], ("thumb_proximal", side), ("thumb_distal", side), names[0], True)
+        b.add(names[2], ("thumb_distal", side), ("thumb_tip", side), names[1], True)
+        b.add(n("親指先"), ("thumb_tip", side), finger_tip_extension(b, "thumb", side), names[2], True)
         add_leg(b, side, "下半身", n("足"), n("ひざ"), n("足首"))
     return b.build()
 

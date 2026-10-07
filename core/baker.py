@@ -2,7 +2,9 @@
 
 The bake solves the frames one after the other and keeps the results in NumPy buffers; nothing is keyed until
 the last frame is solved, so cancelling leaves the scene as it was. The plan's passes 1 and 2 are one loop: each
-frame's FK pose is read from the same frame_set that the frame is then solved on. Per frame:
+frame's FK pose is read from the same frame_set that the frame is then solved on. With a pass-through hand
+(solver.py), a pre-pass first reads the FK wrists and the chest on every frame, for the quick wrist motion that
+passes through the magnets. Per frame:
   - the rig is switched off and the frame set, with the add-on's tracks muted, so the character plays the mocap;
   - the FK pose is solved (solver.solve_pose) with the SolveState of the previous frame: the one-euro filters
     and the snap magnets that held each hand;
@@ -17,6 +19,9 @@ NLA. A few frames are then played back and compared with the solve.
 
 Smooth (§9) low-passes the bake actions with the zero-phase Butterworth filter, at the arm and guitar cutoffs.
 Rotations are smoothed as quaternions and written back in the channels' rotation mode, nearest the old values.
+In Correction mode (the default, mocap prep §6.4) only what the solve changed in the arms is smoothed: the FK
+basis q_fk is sampled again with the bake muted, and q_baked becomes q_fk · smooth(q_fk⁻¹ q_baked), so the quick
+motion of the mocap and the prep stays.
 
 Re-clamp (§9) plays the bake back and, on the frames where a hand has gone into a barrier or the chest collider
 (after Smooth, or through a filter's lag), pushes the wrist back out (magnets.clamp_out, collider.push) and solves
@@ -24,13 +29,16 @@ that arm again from the baked pose, keeping the baked hand rotation; only those 
 GuitarRefine layer on the armature is muted meanwhile, as the keys go into the bake strip under it.
 
 Remove Bake takes the add-on's tracks and actions away and puts back what the bake changed: the pushed-down
-actions and the static values (keys.py), and GTR_ROOT's parent. It removes the bake's diagnostics as well.
+actions and the static values (keys.py), and GTR_ROOT's parent. It removes the bake's diagnostics as well. A
+GuitarPrep layer (prepjob.py) is the mocap as far as the bake is concerned: the bake reads it, and Remove Bake
+leaves it. The arm action remembers which prep it was baked from (keys.PREP_SERIAL_PROP).
 
 A bake also records what the solve did on each frame (diagnostics.py) and keys it on the GTR_Diagnostics empty.
 Range overrides (modes.py) choose each frame's mode; where the mode changes, the bake starts its SolveState afresh.
 """
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -38,7 +46,7 @@ import bpy
 import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
-from . import bake, calibrate, collider, diagnostics, filters, keys, magnets, modes, solver
+from . import bake, calibrate, collider, diagnostics, filters, keys, magnets, modes, prep, solver
 from .bonemap import SIDES
 
 ROOT_PARENT_PROP = "gtr_bake_parent"    # on GTR_ROOT: its parent before the first bake
@@ -55,11 +63,7 @@ class BakeError(ValueError):
     """The scene is not ready for the bake or its post-processing."""
 
 
-def frame_range(scene):
-    settings = scene.gtr
-    if settings.use_scene_frame_range:
-        return scene.frame_start, scene.frame_end
-    return settings.frame_start, settings.frame_end
+frame_range = solver.frame_range
 
 
 def rotation_path(mode):
@@ -342,6 +346,10 @@ class BakeJob(Job):
         self.messages = list(setup.messages) + root_messages(setup.root)
         self.paths = {side: chain_path(obj, rig.chains[side]) for side in SIDES}
         self.messages += chain_messages(rig, self.paths)
+        self.prep_serial = keys.prep_serial(obj, playing=True)
+        if keys.has_prep(obj) and not self.prep_serial:
+            self.messages.append(('WARNING', "The GuitarPrep layer is muted (Show Original): the bake read the mocap "
+                                             "without the prep."))
         self.chest = obj.gtr_char.bone_map.chest
         solved = [name for side in SIDES for name in self.paths[side]]
         self.frames = list(range(self.start, self.end + 1))
@@ -356,12 +364,44 @@ class BakeJob(Job):
         self.stats = Stats()
         self.diagnostics = diagnostics.Recorder(self.frames, settings.magnets)
         self.index = 0
+        # The pass-through's pre-pass (solver.py): the FK wrists and chest of every frame, before any is solved.
+        self.prepass = list(self.frames) if solver.passthrough_sides(settings) else []
+        self.pre_index = 0
+        self.pre_wrists = {side: np.empty((len(self.prepass), 3)) for side in SIDES}
+        self.pre_chest = np.empty((len(self.prepass), 4, 4))
+        self.passthrough = {}
         self.started = time.perf_counter()
         keys.record_static(obj, solved)
         keys.record_static(setup.root, transform=True)
         self.temp = Temp(context, (obj, setup.root), keys.ROLES, settings.bake_hide_meshes)
 
+    @property
+    def progress(self):
+        return (self.pre_index + self.index) / max(len(self.prepass) + len(self.frames), 1)
+
+    @property
+    def frame(self):
+        if self.pre_index < len(self.prepass):
+            return self.prepass[self.pre_index]
+        return super().frame
+
+    def _sample(self, context):
+        """One frame of the pass-through's pre-pass; after the last, the details that pass through."""
+        i = self.pre_index
+        self.rig.set_active(False)
+        context.scene.frame_set(self.prepass[i])
+        wrists, self.pre_chest[i] = solver.read_wrists(self.rig.armature, self.rig.chains, self.chest)
+        for side in SIDES:
+            self.pre_wrists[side][i] = wrists[side]
+        self.pre_index += 1
+        if self.pre_index == len(self.prepass):
+            self.passthrough = solver.passthrough_details(context.scene.gtr, self.pre_wrists, self.pre_chest,
+                                                          self.setup.fps)
+
     def step(self, context):
+        if self.pre_index < len(self.prepass):
+            self._sample(context)
+            return
         i, frame = self.index, self.frames[self.index]
         rig, setup = self.rig, self.setup
         bones = rig.armature.pose.bones
@@ -370,6 +410,7 @@ class BakeJob(Job):
         rig.set_active(False)
         context.scene.frame_set(frame)
         pose = solver.sample_pose(context, rig, setup, update=False)
+        pose.passthrough = {side: Vector(detail[i]) for side, detail in self.passthrough.items()}
         for name, buffer in self.fk.items():
             buffer[i] = bones[name].matrix
         self.object_world[i] = rig.armature.matrix_world
@@ -393,6 +434,7 @@ class BakeJob(Job):
         self.rig.set_active(False)
 
         arm_action = keys.new_action(f"{obj.name}_GuitarBake", keys.ARM)
+        arm_action[keys.PREP_SERIAL_PROP] = self.prep_serial
         arm_channels = keys.Channels(arm_action, obj)
         keyed = self._key_arms(obj, arm_channels, frames, interpolation)
         guitar_action = keys.new_action(f"{root.name}_GuitarBake", keys.GUITAR)
@@ -539,7 +581,8 @@ def bake_owners(settings):
 
 
 def has_bake(settings):
-    return any(keys.bake_strips(owner) or ROOT_PARENT_PROP in owner for owner in bake_owners(settings))
+    return any(set(keys.bake_strips(owner)) & set(keys.ROLES) or ROOT_PARENT_PROP in owner
+               for owner in bake_owners(settings))
 
 
 # Smooth --------------------------------------------------------------------------------------------------------
@@ -555,9 +598,12 @@ def _euler_order(owner, data_path):
     return mode if mode in bake.EULER_ORDERS else 'XYZ'
 
 
-def smooth_action(action, owner, cutoff, fps):
+def smooth_action(action, owner, cutoff, fps, reference=None):
     """Low-pass every F-curve of `action`, a bake of `owner`, at `cutoff` Hz (filters.filtfilt); rotations as
-    quaternions. Curves need evenly spaced keys. Returns (smoothed curves, skipped curves)."""
+    quaternions. Curves need evenly spaced keys. With `reference`, a function (data path, mode, frames) -> the
+    channel values (n, k) the FK pose has there, or None, only the correction is smoothed: the baked rotation
+    relative to the FK one (q_fk⁻¹ q_baked), and other channels' difference from FK. Returns (smoothed curves,
+    skipped curves)."""
     groups = {}
     for fcurve in keys.fcurves(action):
         groups.setdefault(fcurve.data_path, {})[fcurve.array_index] = fcurve
@@ -579,9 +625,19 @@ def smooth_action(action, owner, cutoff, fps):
         mode = {"rotation_quaternion": 'QUATERNION', "rotation_axis_angle": 'AXIS_ANGLE'}.get(prop)
         if prop == "rotation_euler":
             mode = _euler_order(owner, path)
-        if mode is not None and indices == list(range(values.shape[1])):
-            q = filters.smooth_quaternions(channel_quaternions(values, mode), cutoff, fs)
+        whole = indices == list(range(values.shape[1]))
+        fk = reference(path, mode, frames) if reference is not None and whole else None
+        if mode is not None and whole:
+            q = filters.continuous_quaternions(channel_quaternions(values, mode))
+            if fk is None:
+                q = filters.smooth_quaternions(q, cutoff, fs)
+            else:
+                q_fk = filters.continuous_quaternions(channel_quaternions(fk, mode))
+                correction = prep.qmul(prep.qinv(q_fk), q)
+                q = prep.qmul(q_fk, filters.smooth_quaternions(correction, cutoff, fs))
             values = channels_near(quaternion_matrices(q), mode, values)
+        elif fk is not None:
+            values = fk + filters.filtfilt(values - fk, cutoff, fs)
         else:
             values = filters.filtfilt(values, cutoff, fs)
         for column, i in enumerate(indices):
@@ -590,33 +646,109 @@ def smooth_action(action, owner, cutoff, fps):
     return smoothed, skipped
 
 
+_BONE_PATH = re.compile(r'^pose\.bones\["(.+)"\]\.(\w+)$')
+
+
+class SmoothJob(Job):
+    """Smooth the bake actions of the scene's character and guitar (see the module notes). In Correction mode the
+    character's FK basis is sampled first, frame by frame with the bake muted, so that only what the solve changed
+    is smoothed."""
+
+    def __init__(self, context, rig=None):
+        scene = context.scene
+        settings = scene.gtr
+        self.found = {}
+        for owner, role in ((settings.armature, keys.ARM), (settings.guitar_root, keys.GUITAR)):
+            found = keys.bake_strips(owner).get(role) if owner is not None else None
+            if found is not None:
+                self.found[role] = (owner, found[1].action)
+        if not self.found:
+            raise BakeError("There is no bake to smooth.")
+        self.frames, self.basis, self.temp = [], {}, None
+        if settings.smooth_mode == 'CORRECTION' and keys.ARM in self.found:
+            obj, action = self.found[keys.ARM]
+            _check_tweak((obj,))
+            if rig is not None:
+                rig.set_active(False)
+            settings.solve_active = False
+            keys.unmute_after_solve(obj)
+            names, frames = set(), set()
+            for fcurve in keys.fcurves(action):
+                match = _BONE_PATH.match(fcurve.data_path)
+                if match and obj.pose.bones.get(match.group(1)) is not None:
+                    names.add(match.group(1))
+                    frames.update(int(round(f)) for f in keys.read(fcurve)[0])
+            self.frames = sorted(frames)
+            self.basis = {name: np.empty((len(self.frames), 4, 4)) for name in names}
+            self.temp = Temp(context, (obj,), keys.ROLES, settings.bake_hide_meshes)
+        self.index = 0
+
+    def step(self, context):
+        i = self.index
+        context.scene.frame_set(self.frames[i])
+        bones = self.found[keys.ARM][0].pose.bones
+        for name, buffer in self.basis.items():
+            buffer[i] = bones[name].matrix_basis
+        self.index += 1
+
+    def cancel(self, context):
+        if self.temp is not None:
+            self.temp.restore()
+
+    def _reference(self, path, mode, frames):
+        """The FK channel values of `path` on `frames` (see smooth_action), or None."""
+        match = _BONE_PATH.match(path)
+        if match is None or match.group(1) not in self.basis:
+            return None
+        wanted = np.round(frames).astype(int)
+        rows = np.minimum(np.searchsorted(self.frames, wanted), len(self.frames) - 1)
+        if np.any(np.asarray(self.frames)[rows] != wanted):
+            return None
+        loc, rot, scale = bake.decompose(self.basis[match.group(1)][rows])
+        prop = match.group(2)
+        if prop == "location":
+            return loc
+        if prop == "scale":
+            return scale
+        return bake.rotation_channels(rot, mode) if mode is not None else None
+
+    def finish(self, context):
+        if self.temp is not None:
+            self.temp.unmute()
+        scene = context.scene
+        settings = scene.gtr
+        fps = solver.scene_fps(scene)
+        lines = []
+        for role, cutoff in ((keys.ARM, settings.smooth_cutoff_arms), (keys.GUITAR, settings.smooth_cutoff_guitar)):
+            if role not in self.found:
+                continue
+            owner, action = self.found[role]
+            correction = role == keys.ARM and settings.smooth_mode == 'CORRECTION'
+            smoothed, skipped = smooth_action(action, owner, cutoff, fps, self._reference if correction else None)
+            name = "arm" if role == keys.ARM else "guitar"
+            text = (f"Smoothed the solve's correction on {smoothed} {name} curves at {cutoff:g} Hz" if correction
+                    else f"Smoothed {smoothed} {name} curves at {cutoff:g} Hz")
+            if not filters.can_filter(cutoff, fps):
+                text = f"The {name} cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed"
+            if skipped:
+                text += f"; skipped {skipped} whose keys are not one per frame"
+            lines.append(text + ".")
+        if self.temp is not None:
+            self.temp.restore()
+        else:
+            scene.frame_set(scene.frame_current, subframe=scene.frame_subframe)
+        messages = [('INFO', text) for text in lines]
+        if keys.ARM in self.found and settings.smooth_mode == 'KEYS' and keys.has_prep(self.found[keys.ARM][0]):
+            messages.append(('WARNING', "Smoothing the arm keys also smooths away the prep's quick motion: use Smooth "
+                                        "Correction to keep it."))
+        messages.append(('INFO', "Re-clamp restores the contacts that smoothing loosened."))
+        settings.bake_report = calibrate.format_messages(messages)
+        return messages
+
+
 def smooth(context):
-    """Smooth the bake actions of the scene's character and guitar. Returns messages."""
-    scene = context.scene
-    settings = scene.gtr
-    fps = solver.scene_fps(scene)
-    lines, total = [], 0
-    for owner, role, cutoff in ((settings.armature, keys.ARM, settings.smooth_cutoff_arms),
-                                (settings.guitar_root, keys.GUITAR, settings.smooth_cutoff_guitar)):
-        found = keys.bake_strips(owner).get(role) if owner is not None else None
-        if found is None:
-            continue
-        smoothed, skipped = smooth_action(found[1].action, owner, cutoff, fps)
-        total += smoothed
-        name = "arm" if role == keys.ARM else "guitar"
-        text = f"Smoothed {smoothed} {name} curves at {cutoff:g} Hz"
-        if not filters.can_filter(cutoff, fps):
-            text = f"The {name} cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed"
-        if skipped:
-            text += f"; skipped {skipped} whose keys are not one per frame"
-        lines.append(text + ".")
-    if not lines:
-        raise BakeError("There is no bake to smooth.")
-    scene.frame_set(scene.frame_current, subframe=scene.frame_subframe)
-    messages = [('INFO', text) for text in lines]
-    messages.append(('INFO', "Re-clamp restores the contacts that smoothing loosened."))
-    settings.bake_report = calibrate.format_messages(messages)
-    return messages
+    """Smooth the bake actions of the scene's character and guitar to the end (SmoothJob). Returns messages."""
+    return SmoothJob(context).run(context)
 
 
 # Re-clamp ------------------------------------------------------------------------------------------------------
@@ -628,19 +760,10 @@ def clamp_targets(settings, setup, pose, guitar, frame_mode=None):
     body = collider.capsule(settings, cal, *pose.chest)
     out = {}
     for side, arm in pose.arms.items():
-        wrist = arm.wrist
-        if body is not None and side in settings.collider_hands:
-            tips = [arm.wrist + v for v in arm.tips.values()] if settings.collider_fingertips else ()
-            wrist, _ = collider.push(body, wrist, tips)
-        for entry in solver.magnet_entries(settings, cal, side, arm, guitar, setup.shapes, frame_mode=frame_mode):
-            if not magnets.is_barrier(entry):
-                continue
-            if not settings.barriers_ignore_distance:
-                depth = -(wrist + entry.offset - entry.feature.a).dot(entry.feature.normal)
-                if depth >= entry.params.reach:
-                    continue
-            wrist, _ = magnets.clamp_out(wrist, entry)
-        out[side] = (wrist, (wrist - arm.wrist).length)
+        collide = body is not None and side in settings.collider_hands
+        tips = list(arm.tips.values()) if collide and settings.collider_fingertips else []
+        entries = solver.magnet_entries(settings, cal, side, arm, guitar, setup.shapes, frame_mode=frame_mode)
+        out[side] = solver.keep_out(settings, body if collide else None, arm.wrist, tips, entries)
     return out
 
 

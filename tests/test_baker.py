@@ -278,7 +278,7 @@ class BakeVRoidTest(BakeTest):
         job.step(bpy.context)
         self.assertTrue(all(obj.hide_viewport for obj in meshes))
         self.assertTrue(all(track.mute for track, _ in keys._our_tracks(self.obj)))
-        self.assertAlmostEqual(job.progress, 2 / len(FRAMES))
+        self.assertAlmostEqual(job.progress, 2 / (len(job.prepass) + len(FRAMES)))     # with the pass-through pre-pass
         job.cancel(bpy.context)
         self.assertEqual(self.scene.frame_current, 4)
         self.assertEqual([obj.hide_viewport for obj in meshes], [True] + [False] * (len(meshes) - 1))

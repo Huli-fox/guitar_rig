@@ -1,5 +1,5 @@
-"""Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mount,
-magnets, solve (with the range overrides), bake and diagnostics."""
+"""Sidebar panels in View3D > Sidebar > Guitar: character, guitar and landmarks, bones, calibration, mocap prep,
+mount, magnets, solve (with the range overrides), bake and diagnostics."""
 
 import math
 import textwrap
@@ -7,8 +7,9 @@ import textwrap
 import bpy
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, calibrate, diagnostics, landmarks, magnets, modes, solver
+from ..core import bonemap, calibrate, diagnostics, keys, landmarks, magnets, modes, prepjob, solver
 from ..core.bonemap import SIDES
+from ..ops import prep as prep_ops
 from ..rig import build
 
 MESSAGE_ICONS = {'ERROR': 'CANCEL', 'WARNING': 'ERROR', 'INFO': 'INFO'}
@@ -219,6 +220,70 @@ class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
         draw_messages(layout, context, messages + calibrate.parse_messages(cal.messages))
 
 
+class GTR_PT_prep(_SubPanel, bpy.types.Panel):
+    bl_idname = "GTR_PT_prep"
+    bl_label = "Prep"
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.scene.gtr
+        obj = settings.armature
+        options = settings.prep
+        if not obj.gtr_char.calibration.is_valid:
+            layout.label(text="Calibrate first", icon='INFO')
+            return
+        supported, messages = prep_ops.support(obj)
+        if not supported:
+            draw_messages(layout, context, messages)
+            return
+        layout.prop(options, "intensity", slider=True)
+        header, body = layout.panel("GTR_prep_tools", default_closed=True)
+        header.label(text="Tools")
+        if body is not None:
+            col = body.box().column(align=True)
+            col.label(text="Range")
+            col.prop(options, "range_wrist")
+            col.prop(options, "range_fingers")
+            col.prop(options, "range_cutoff")
+            col = body.box().column(align=True)
+            col.label(text="Snap")
+            col.prop(options, "snap_strokes")
+            col.prop(options, "snap_fingers")
+            col.prop(options, "stroke_min")
+            col.prop(options, "finger_min")
+            col.prop(options, "snap_picking")
+            sub = col.column(align=True)
+            sub.active = options.snap_picking
+            sub.prop(options, "snap_picking_fingers")
+            col = body.box().column(align=True)
+            col.label(text="Swing")
+            col.prop(options, "swing")
+            col.prop(options, "swing_lead")
+            col.prop(options, "swing_elbow_share")
+            col = body.box().column(align=True)
+            col.label(text="Roll and Safety")
+            col.prop(options, "roll_to_twist")
+            col.prop(options, "joint_margin")
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator("gtr.apply_prep", icon='SHADERFX')
+        row.operator("gtr.remove_prep", text="", icon='TRASH')
+        if keys.has_prep(obj):
+            original = prepjob.is_muted(obj)
+            op = layout.operator("gtr.toggle_prep", text="Show Original", icon='HIDE_ON' if original else 'HIDE_OFF',
+                                 depress=original)
+            op.original = not original
+        messages = prepjob.status(settings) + [m for m in messages if options.roll_to_twist or "Roll" not in m[1]]
+        if options.report:
+            box = layout.box()
+            draw_messages(box, context, calibrate.parse_messages(options.report))
+        elif not keys.has_prep(obj):
+            messages.append(('INFO', "Apply Prep touches up the mocap before the bake: wider, crisper picking "
+                                     "strokes with an arm swing, crisp fretting fingers, and the forearm roll on the "
+                                     "twist bone. Your action is not changed."))
+        draw_messages(layout, context, messages)
+
+
 class GTR_PT_mount(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_mount"
     bl_label = "Mount and Wrist"
@@ -358,6 +423,20 @@ class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
             draw_messages(layout, context, [('INFO', "Load a preset for SAO's magnets, or add your own. They act "
                                                      "in list order.")])
 
+        header, body = layout.panel("GTR_passthrough", default_closed=True)
+        header.label(text="Pass-Through" + (f" ({', '.join(sorted(settings.passthrough_hands))})"
+                                            if settings.passthrough_hands else ""))
+        if body is not None:
+            col = body.column()
+            col.row(align=True).prop(settings, "passthrough_hands")
+            sub = col.column(align=True)
+            sub.active = bool(settings.passthrough_hands)
+            sub.prop(settings, "passthrough_cutoff")
+            sub.prop(settings, "passthrough_gain")
+            draw_messages(body, context, [('INFO', "The magnets act on the slow part of these wrists' path, and the "
+                                                   "quick strokes ride on top, kept out of the barriers. Without it, "
+                                                   "a strum-line magnet takes back most of a stroke.")])
+
         header, body = layout.panel("GTR_collider", default_closed=True)
         header.prop(settings, "collider_enabled")
         if body is not None:
@@ -453,6 +532,9 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
                 moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
                 text = f"moved {moved:.1f} cm" + (", reach clamped" if side_result.clamped else "")
                 rows.append((f"{'Left' if side == 'L' else 'Right'} wrist", text))
+                if side_result.passthrough is not None:
+                    rows.append(("   pass-through",
+                                 f"{side_result.passthrough.length * result.metres_per_bu * 100.0:.1f} cm"))
                 for index, hit in side_result.hits:
                     if hit.weight > 0.0 and index < len(settings.magnets):
                         rows.append(("   " + settings.magnets[index].name,
@@ -528,6 +610,7 @@ class GTR_PT_bake(_SubPanel, bpy.types.Panel):
         header, body = layout.panel("GTR_post", default_closed=False)
         header.label(text="After the Bake")
         if body is not None:
+            body.row(align=True).prop(settings, "smooth_mode", expand=True)
             col = body.column(align=True)
             col.prop(settings, "smooth_cutoff_arms")
             col.prop(settings, "smooth_cutoff_guitar")
@@ -577,6 +660,6 @@ class GTR_PT_diagnostics(_SubPanel, bpy.types.Panel):
                                                  "Re-clamp.")])
 
 
-CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_mount, GTR_PT_magnets,
-           GTR_PT_solve, GTR_PT_bake, GTR_PT_diagnostics)
+CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_prep, GTR_PT_mount,
+           GTR_PT_magnets, GTR_PT_solve, GTR_PT_bake, GTR_PT_diagnostics)
 register, unregister = bpy.utils.register_classes_factory(CLASSES)

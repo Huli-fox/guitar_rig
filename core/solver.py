@@ -31,6 +31,13 @@ and, off by default, where SAO does not: each wrist target's correction (the tar
 mocap's own motion is never smoothed), and the neck aim's swing. Lengths are filtered in SAO's arm space.
 Solve Frame solves the current frame like the first frame of a bake: the filters have no history to smooth.
 
+Pass-through (mocap prep §6.2): a snap or linear magnet shrinks a wrist's distance d from it to about d² / R, so it
+would take back most of a stroke. On the Pass-Through hands the wrist's motion relative to the chest is split into
+a slow base (low-passed at the pass-through cutoff, zero phase) and the quick detail; the collider and the magnets
+act on the base, the detail (times the gain) is added back, and the barriers and the collider push the result out
+again. The magnets still decide where the hand hovers, and the strokes ride on top. The bake samples the FK wrists
+of all its frames first; Solve Frame samples 2 s each side of its frame, within the bake range.
+
 The last Solve Frame result, with what each magnet did, is kept for the overlay and the panels while the rig
 shows it, which is until the frame changes. Meanwhile a bake's tracks are muted (keys.mute_for_solve): the IK
 then starts from the mocap, as in the bake, and Blender's IK result depends on the pose it starts from (the
@@ -40,6 +47,7 @@ upper arm's twist turns the pole alignment).
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 from . import aim, calibrate, collider, filters, ik, keys, landmarks, magnets, modes, mount, wrist
@@ -53,6 +61,7 @@ SIDE_NAMES = {'L': "left", 'R': "right"}
 FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
 SAO_UNITS_PER_M = 11.0      # MMD units per metre: SAO's lengths, in the arm space of its reference avatar
 CLAMPED_OFFSET_SAO = 1.0 / 9999.0   # SAO's offset of a clamped hand for the rotation filter, in its units
+PASSTHROUGH_WINDOW_S = 2.0  # Solve Frame samples this many seconds each side of its frame for the pass-through
 
 _results = {}               # scene session_uid -> FrameResult of the last solve
 
@@ -307,6 +316,7 @@ class SideResult:
     wrist: Vector = None        # the solved wrist
     elbow: Vector = None        # the solved elbow
     collider: object = None     # collider.Contact: what the chest collider did, or None when it is off
+    passthrough: Vector = None  # the quick wrist motion that passed through the magnets, or None when it is off
 
     @property
     def error(self):
@@ -384,6 +394,111 @@ def _load(obj):
 
 def scene_fps(scene):
     return scene.render.fps / (scene.render.fps_base or 1.0)
+
+
+def frame_range(scene):
+    """The bake's frame range (first, last)."""
+    settings = scene.gtr
+    if settings.use_scene_frame_range:
+        return scene.frame_start, scene.frame_end
+    return settings.frame_start, settings.frame_end
+
+
+# Pass-through --------------------------------------------------------------------------------------------------
+
+def passthrough_sides(settings):
+    """The hands whose quick motion passes through the magnets."""
+    if settings.passthrough_gain <= 0.0:
+        return ()
+    return tuple(side for side in SIDES if side in settings.passthrough_hands)
+
+
+def read_wrists(obj, chains, chest):
+    """({side: the IK hand's head}, the chest bone's matrix), world space, in the current evaluated pose, as
+    NumPy arrays."""
+    mw = obj.matrix_world
+    wrists = {side: np.array(mw @ obj.pose.bones[chain.hand].head) for side, chain in chains.items()}
+    return wrists, np.array(mw @ obj.pose.bones[chest].matrix)
+
+
+def passthrough_details(settings, wrists, chest, fps):
+    """{side: (n, 3)} the world vectors that pass through the magnets on each frame: the wrist's motion relative to
+    the chest above the cutoff, times the gain. `wrists`: {side: (n, 3) world points}; `chest`: (n, 4, 4) world
+    matrices of the chest bone."""
+    chest = np.asarray(chest, dtype=np.float64)
+    inverse = np.linalg.inv(chest)
+    out = {}
+    for side in passthrough_sides(settings):
+        local = np.einsum("nij,nj->ni", inverse[:, :3, :3], wrists[side]) + inverse[:, :3, 3]
+        detail = local - filters.filtfilt(local, settings.passthrough_cutoff, fps)
+        out[side] = np.einsum("nij,nj->ni", chest[:, :3, :3], detail) * settings.passthrough_gain
+    return out
+
+
+def passthrough_window(scene, frame, fps):
+    """The frames Solve Frame samples for the pass-through: 2 s each side of `frame`, within the bake range (the
+    scene range for a frame outside it)."""
+    start, end = frame_range(scene)
+    if not start <= frame <= end:
+        start, end = scene.frame_start, scene.frame_end
+    reach = int(round(PASSTHROUGH_WINDOW_S * fps))
+    return list(range(min(frame, max(start, frame - reach)), max(frame, min(end, frame + reach)) + 1))
+
+
+def sample_passthrough(context, rig, setup):
+    """{side: world vector} that passes through the magnets on the current frame, from the FK wrists of the frames
+    around it (passthrough_window). The rig is off and the add-on's bake tracks muted while they are sampled, the
+    scene's meshes hidden if the bake hides them; the frame is set back afterwards."""
+    scene = context.scene
+    settings = scene.gtr
+    if not passthrough_sides(settings):
+        return {}
+    obj = rig.armature
+    current = (scene.frame_current, scene.frame_subframe)
+    frames = passthrough_window(scene, current[0], setup.fps)
+    hidden = []
+    if settings.bake_hide_meshes:
+        for item in scene.objects:
+            if item.type == 'MESH' and not item.hide_viewport:
+                item.hide_viewport = True
+                hidden.append(item.name)
+    wrists = {side: np.empty((len(frames), 3)) for side in SIDES}
+    chest = np.empty((len(frames), 4, 4))
+    try:
+        with keys.muted((obj,)):
+            rig.set_active(False)
+            for i, frame in enumerate(frames):
+                scene.frame_set(frame)
+                found, chest[i] = read_wrists(obj, rig.chains, obj.gtr_char.bone_map.chest)
+                for side in SIDES:
+                    wrists[side][i] = found[side]
+    finally:
+        for name in hidden:
+            item = scene.objects.get(name)
+            if item is not None:
+                item.hide_viewport = False
+        scene.frame_set(current[0], subframe=current[1])
+    index = frames.index(current[0])
+    return {side: Vector(values[index]) for side, values in passthrough_details(settings, wrists, chest,
+                                                                                setup.fps).items()}
+
+
+def keep_out(settings, body, wrist, tips, entries):
+    """(wrist, push) with the wrist pushed out of the chest collider `body` (or None) and of the barrier magnets
+    among `entries`, as Re-clamp does; `tips` are world vectors from the wrist to the fingertips the collider
+    keeps out."""
+    start = wrist
+    if body is not None:
+        wrist, _ = collider.push(body, wrist, [wrist + v for v in tips])
+    for entry in entries:
+        if not magnets.is_barrier(entry):
+            continue
+        if not settings.barriers_ignore_distance:
+            depth = -(wrist + entry.offset - entry.feature.a).dot(entry.feature.normal)
+            if depth >= entry.params.reach:
+                continue
+        wrist, _ = magnets.clamp_out(wrist, entry)
+    return wrist, (wrist - start).length
 
 
 def sample_arms(context, rig, cal):
@@ -484,6 +599,7 @@ class Pose:
     mounted: magnets.GuitarPose
     chest: tuple                # (P_chest, Q_chest): the chest bone head and its rest-aligned frame
     char_world: Quaternion      # the character frame
+    passthrough: dict = field(default_factory=dict)     # side -> world vector passing through the magnets
 
 
 def sample_pose(context, rig, setup, update=True):
@@ -537,18 +653,23 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                                                      cal.axis_rot[side])
                     hand = hooks.wrist(side, (frame @ arm.hand_offset.inverted()).normalized(), pose.chest[1])
                 hands[side] = hand
-                start, contact = arm.wrist, None
-                if body is not None and side in settings.collider_hands:
-                    turn = hand @ arm.hand.inverted()
-                    tips = [arm.wrist + turn @ v for v in arm.tips.values()] if settings.collider_fingertips else ()
-                    start, contact = collider.push(body, arm.wrist, tips)
+                detail = pose.passthrough.get(side)
+                start, contact = arm.wrist if detail is None else arm.wrist - detail, None
+                collide = body is not None and side in settings.collider_hands
+                turn = hand @ arm.hand.inverted()
+                tips = [turn @ v for v in arm.tips.values()] if collide and settings.collider_fingertips else []
+                if collide:
+                    start, contact = collider.push(body, start, [start + v for v in tips])
                 entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hand, hooks, frame_mode)
                 point, hits = magnets.apply(start, entries, barriers_ignore_distance=settings.barriers_ignore_distance,
                                             holding=state.holding.get(side, frozenset()))
+                if detail is not None:
+                    point, _ = keep_out(settings, body if collide else None, point + detail, tips, entries)
                 point = hooks.target(side, arm.wrist, point)
                 target, clamped = ik.reach_clamp(point, arm.shoulder, settings.reach_clamp * arm.length,
                                                  (arm.wrist - arm.shoulder).length)
-                sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped, collider=contact)
+                sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped, collider=contact,
+                                         passthrough=None if detail is None else detail.copy())
                 rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hand, None)
                 goal = target - turns[side] @ (arm.wrist - arm.tip)
                 place_goal(rig, side, arm, goal, cal, root_bias(settings, side, arm))
@@ -608,7 +729,9 @@ def solve(context, rig, iterations=None):
     setup = prepare(context, rig)
     keys.mute_for_solve(rig.armature)
     try:
+        passthrough = sample_passthrough(context, rig, setup)
         pose = sample_pose(context, rig, setup)
+        pose.passthrough = passthrough
         result = solve_pose(context, rig, setup, pose, SolveState.new(setup.fps), iterations)
     except Exception:
         keys.unmute_after_solve(rig.armature)

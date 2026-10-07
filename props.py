@@ -289,6 +289,72 @@ class GTR_Guitar(PropertyGroup):
                                                "(neck length), Y (neck width) and Z (neck thickness)")
 
 
+class GTR_Prep(PropertyGroup):
+    """Mocap prep settings (core/prep.py, core/prepjob.py): each tool's strength, with Intensity scaling them all
+    toward neutral (range and snap 1, swing 0)."""
+
+    intensity: FloatProperty(
+        name="Intensity", default=1.0, min=0.0, soft_max=2.0,
+        description="Scales every tool toward doing nothing (0) or beyond its strength (above 1)")
+    # Range (§5.3)
+    range_wrist: FloatProperty(
+        name="Picking Wrist", default=1.5, min=0.0, soft_max=3.0,
+        description="How much larger the picking hand's quick turns get, relative to the forearm (1: unchanged)")
+    range_fingers: FloatProperty(
+        name="Fretting Fingers", default=1.3, min=0.0, soft_max=3.0,
+        description="How much larger the fretting fingers' quick moves get, per joint (1: unchanged). Quick "
+                    "presses overshoot slightly")
+    range_cutoff: FloatProperty(
+        name="Cutoff (Hz)", default=1.0, min=0.1, max=5.0,
+        description="Motion slower than this is the posture, which Range and Snap keep; faster motion is the "
+                    "detail they work on")
+    # Snap (§5.4)
+    snap_strokes: FloatProperty(
+        name="Strokes", default=2.0, min=1.0, soft_max=5.0,
+        description="Steepness of the picking hand's strokes: each stroke is retimed along an S-curve with this "
+                    "exponent, keeping where it starts, ends and crosses half way (1: unchanged)")
+    snap_fingers: FloatProperty(
+        name="Fretting Fingers", default=2.0, min=1.0, soft_max=5.0,
+        description="Steepness of the fretting fingers' presses and releases (1: unchanged)")
+    snap_picking: BoolProperty(
+        name="Picking Fingers", default=False,
+        description="Also snap the picking hand's fingers, for fingerpicking")
+    snap_picking_fingers: FloatProperty(
+        name="Picking Strength", default=2.0, min=1.0, soft_max=5.0,
+        description="Steepness of the picking fingers' moves (1: unchanged)")
+    stroke_min: FloatProperty(
+        name="Smallest Stroke", subtype='ANGLE', default=math.radians(4.0), min=math.radians(0.1),
+        max=math.radians(90.0), description="Strokes of the picking hand smaller than this are left as they are")
+    finger_min: FloatProperty(
+        name="Smallest Finger Move", subtype='ANGLE', default=math.radians(8.0), min=math.radians(0.1),
+        max=math.radians(180.0),
+        description="Finger moves smaller than this, in the finger's total bend over its joints, are left as they "
+                    "are")
+    # Swing (§5.5)
+    swing: FloatProperty(
+        name="Swing", default=1.0, min=0.0, soft_max=3.0,
+        description="Arm swing added to the strokes: the wrist travels this many times the pick point's stroke, "
+                    "turned at the shoulder and the elbow (0: off)")
+    swing_lead: FloatProperty(
+        name="Lead (frames)", default=1.0, soft_min=-3.0, soft_max=3.0,
+        description="How many frames the arm's swing leads the hand's stroke")
+    swing_elbow_share: FloatProperty(
+        name="Elbow Share", default=0.7, min=0.0, max=1.0,
+        description="How much of the swing the elbow makes against the shoulder")
+    # Roll (§5.6)
+    roll_to_twist: BoolProperty(
+        name="Roll to Twist Bone", default=True,
+        description="Move the forearm roll from the wrist onto the forearm twist bone (MMD 手捩) on both hands, "
+                    "so the forearm skin twists with it. The hands keep their pose")
+    # Safety (§5.7)
+    joint_margin: FloatProperty(
+        name="Joint Margin", subtype='ANGLE', default=math.radians(5.0), min=0.0, max=math.radians(45.0),
+        description="Finger joints stay within the range they have in the mocap plus this margin")
+
+    report: StringProperty(name="Prep Report", description="What the last Apply Prep did")
+    serial: IntProperty(name="Prep Serial", description="Counts the preps, so a bake can tell which one it read")
+
+
 MOUNT_SOURCE_ITEMS = (
     ('NONE', "Not Set", "No mount yet: load a preset or capture it"),
     ('PRESET', "Preset", "From a preset: only an estimate"),
@@ -465,6 +531,19 @@ class GTR_Settings(PropertyGroup):
     filter_guitar: FloatVectorProperty(name="Aim Filter", size=3, min=0.0, default=filters.SAO_WRIST,
                                        description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
 
+    # Pass-through (mocap prep §6.2)
+    passthrough_hands: EnumProperty(
+        name="Pass-Through", items=SIDE_ITEMS, options={'ENUM_FLAG'}, default={'R'},
+        description="Hands whose quick motion passes through the magnets: the magnets act on the slow part of the "
+                    "wrist's path, and the strokes ride on top. The fretting hand needs its magnets to hold it on "
+                    "the fretboard")
+    passthrough_cutoff: FloatProperty(
+        name="Cutoff (Hz)", default=1.0, min=0.1, max=10.0,
+        description="Wrist motion faster than this, relative to the chest, passes through the magnets")
+    passthrough_gain: FloatProperty(
+        name="Gain", default=1.0, min=0.0, soft_max=2.0,
+        description="Share of the quick wrist motion that passes through (0: the magnets act on all of it)")
+
     # Bake (§8) and post-processing (§9)
     guitar_space: EnumProperty(
         name="Guitar Keys", default='CHEST',
@@ -479,6 +558,11 @@ class GTR_Settings(PropertyGroup):
         name="Interpolation", default='LINEAR',
         items=(('LINEAR', "Linear", "Straight between the per-frame keys"),
                ('BEZIER', "Bezier", "Smooth between the per-frame keys")))
+    smooth_mode: EnumProperty(
+        name="Smooth", default='CORRECTION',
+        items=(('CORRECTION', "Correction", "Low-pass only what the solve changed in the arms, so the mocap's own "
+                                           "quick motion (and the prep's) stays"),
+               ('KEYS', "Keys", "Low-pass the baked arm keys themselves")))
     smooth_cutoff_arms: FloatProperty(name="Arm Cutoff (Hz)", default=6.0, min=0.1,
                                       description="Post-bake low-pass cutoff for the arm channels")
     smooth_cutoff_guitar: FloatProperty(name="Guitar Cutoff (Hz)", default=3.0, min=0.1,
@@ -497,6 +581,8 @@ class GTR_Settings(PropertyGroup):
                                      description="What the worst frames are ranked by")
 
     # Helper rig and Solve Frame (§4, §6)
+    prep: PointerProperty(type=GTR_Prep)
+
     rig_collection: PointerProperty(name="Rig Collection", type=bpy.types.Collection,
                                     description="The GuitarRig collection that holds the helper empties")
     rig_armature: PointerProperty(name="Rig Armature", type=bpy.types.Object,
@@ -516,6 +602,7 @@ CLASSES = (
     GTR_Calibration,
     GTR_Character,
     GTR_Guitar,
+    GTR_Prep,
     GTR_Settings,
 )
 

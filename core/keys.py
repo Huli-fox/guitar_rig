@@ -4,18 +4,21 @@ Actions: Blender 4.4 introduced slotted actions (layers, keyframe strips, channe
 the legacy `Action.fcurves`. `Channels` writes F-curves through whichever API the running Blender has; keys are
 written densely, one per frame, with `foreach_set`.
 
-NLA: the add-on's actions carry a `gtr_bake` custom property with their role (ARM, GUITAR, REFINE). On each
+NLA: the add-on's actions carry a `gtr_bake` custom property with their role (ARM, GUITAR, REFINE, PREP). On each
 owner (the armature, GTR_ROOT) a bake leaves, from the bottom up:
     the user's tracks, then the owner's active action pushed down into a track of its own,
+    "GuitarPrep" (armature only, from Apply Prep, prepjob.py): the touched-up mocap, blend Replace,
     "GuitarBake": the solved channels, blend Replace, nothing outside the bake range,
     "GuitarRefine": an empty action, blend Combine, for the user's corrections (§17).
 The active action is evaluated above every NLA track, so a Replace strip below it would be overridden: the bake
-pushes it down first, as the NLA editor's Push Down does, and Remove Bake puts it back. A re-bake replaces the
-bake track right under the refine track, which it leaves as it is: it holds the user's work.
+and the prep push it down first, as the NLA editor's Push Down does, and it is put back once neither is left. A
+re-bake replaces the bake track right under the refine track, which it leaves as it is: it holds the user's work.
+The prep track always sits right above the pushed-down action, so the bake goes above it.
 
-To read the mocap again (a re-bake, Solve Frame), the add-on's tracks are muted. A channel the mocap does not
-animate would then keep the last baked value that played, so the bake remembers such static values first
-(record_static) and muting puts them back.
+To read the mocap again (a re-bake, Solve Frame), the add-on's bake tracks are muted (ROLES); the prep track plays
+on, as it is the mocap the solve reads. Apply Prep reads the raw mocap, with every track muted (ALL_ROLES). A
+channel the mocap does not animate would then keep the last value that played, so the bake and the prep remember
+such static values first (record_static) and muting puts them back.
 """
 
 import math
@@ -25,9 +28,11 @@ import bpy
 import numpy as np
 
 TAG = "gtr_bake"                    # custom property on the add-on's actions: their role
-ARM, GUITAR, REFINE = 'ARM', 'GUITAR', 'REFINE'
-ROLES = (ARM, GUITAR, REFINE)
-TRACK_NAMES = {ARM: "GuitarBake", GUITAR: "GuitarBake", REFINE: "GuitarRefine"}
+ARM, GUITAR, REFINE, PREP = 'ARM', 'GUITAR', 'REFINE', 'PREP'
+ROLES = (ARM, GUITAR, REFINE)       # the tracks muted to read the mocap
+BAKED = (ARM, GUITAR)
+ALL_ROLES = ROLES + (PREP,)
+TRACK_NAMES = {ARM: "GuitarBake", GUITAR: "GuitarBake", REFINE: "GuitarRefine", PREP: "GuitarPrep"}
 SOURCE_PROP = "gtr_bake_source"     # on an owner whose active action a bake pushed down: [track, action]
 INTERPOLATION = {'CONSTANT': 0, 'LINEAR': 1, 'BEZIER': 2}
 
@@ -38,7 +43,7 @@ def slotted():
 
 
 def is_ours(action):
-    return action is not None and action.get(TAG) in ROLES
+    return action is not None and action.get(TAG) in ALL_ROLES
 
 
 def new_action(name, role):
@@ -210,19 +215,38 @@ def bake_strips(owner):
 
 
 def has_bake(owner):
-    return any(role != REFINE for role in bake_strips(owner))
+    return any(role in BAKED for role in bake_strips(owner))
+
+
+def has_prep(owner):
+    return owner is not None and PREP in bake_strips(owner)
+
+
+PREP_SERIAL_PROP = "gtr_prep_serial"    # on a prep action: its serial; on a bake action: the prep it was baked from
+
+
+def prep_serial(owner, playing=False):
+    """The serial of the owner's prep action, 0 if there is none (or, with `playing`, if its track is muted)."""
+    found = bake_strips(owner).get(PREP) if owner is not None else None
+    if found is None or (playing and found[0].mute):
+        return 0
+    return int(found[1].action.get(PREP_SERIAL_PROP, 0))
 
 
 def mute(owners, roles=ROLES):
-    """Mute the add-on's tracks with strips of `roles` on `owners`; returns what `unmute` needs. Muting the bake
-    tracks also puts back the static values (record_static), so that the scene plays the source animation."""
+    """Mute the add-on's tracks with strips of `roles` on `owners`; returns what `unmute` needs. Muting a bake or
+    prep track also puts back the static values (record_static), so that the scene plays the source animation.
+    Only then: muting a track has the animation evaluated again, which overrides the static values of the
+    channels something still animates (a prep layer that plays on, the mocap)."""
     saved = []
     for owner in owners:
+        muted = False
         for track, found in _our_tracks(owner):
             if found & set(roles):
                 saved.append((owner.name, track.name, track.mute))
                 track.mute = True
-        if {ARM, GUITAR} & set(roles):
+                muted = muted or bool(found & {ARM, GUITAR, PREP})
+        if muted:
             apply_static(owner)
     return saved
 
@@ -363,15 +387,18 @@ def place_bake(owner, role, action, slot, start, refine_range):
     data = owner.animation_data or owner.animation_data_create()
     old_actions, messages = [], []
     for track, roles in _our_tracks(owner):
-        if roles - {REFINE}:
+        if roles & set(BAKED):
             old_actions += [strip.action for strip in track.strips if is_ours(strip.action)
-                            and strip.action[TAG] != REFINE]
+                            and strip.action[TAG] in BAKED]
             data.nla_tracks.remove(track)
-    refine = bake_strips(owner).get(REFINE)
+    found = bake_strips(owner)
+    refine = found.get(REFINE)
     below, lift = None, False
     if refine is not None:
         below = _track_below(data, refine[0])
         lift = below is None        # nothing goes under the bottom track: the refine track moves up instead
+    elif PREP in found:
+        below = found[PREP][0]
     pushed = push_down(owner, None if lift else below)
     track = data.nla_tracks.new(prev=pushed if pushed is not None else below)
     track.name = TRACK_NAMES[role]
@@ -395,17 +422,70 @@ def place_bake(owner, role, action, slot, start, refine_range):
     return strip, pushed, old_actions, messages
 
 
-def remove_bake(owner):
-    """Remove the add-on's tracks from `owner`, put back the action the bake pushed down and the static values.
-    Returns (removed actions, kept refine actions that hold keys)."""
+def place_prep(owner, action, slot, start):
+    """Put the prep `action` into the owner's NLA stack: the old prep track is removed, the active action is
+    pushed down, and the prep track goes right above it, under the bake and refine tracks.
+    Returns (prep strip, the old prep actions for the caller to delete)."""
+    data = owner.animation_data or owner.animation_data_create()
+    old_actions = []
+    for track, roles in _our_tracks(owner):
+        if PREP in roles:
+            old_actions += [strip.action for strip in track.strips if is_ours(strip.action)
+                            and strip.action[TAG] == PREP]
+            data.nla_tracks.remove(track)
+    ours = [track for track, _ in _our_tracks(owner)]
+    below = _track_below(data, ours[0]) if ours else None
+    lift = bool(ours) and below is None     # the bake tracks are at the bottom: they move up above the prep
+    pushed = push_down(owner, None if lift else below)
+    track = data.nla_tracks.new(prev=pushed if pushed is not None else below)
+    track.name = TRACK_NAMES[PREP]
+    strip = track.strips.new(action.name, int(math.floor(start)), action)
+    if slot is not None:
+        strip.action_slot = slot
+    strip.blend_type = 'REPLACE'
+    strip.extrapolation = 'NOTHING'
+    if lift:
+        for other in ours:
+            _move_to_top(data, other)
+    data.use_nla = True
+    return strip, old_actions
+
+
+def _remove_tracks(owner, which):
+    """Remove the add-on's tracks whose roles `which` accepts; returns (removed actions, kept refine actions that
+    hold keys)."""
     data = owner.animation_data
     removed, kept = [], []
-    if data is not None:
-        for track, _ in _our_tracks(owner):
-            for strip in track.strips:
-                if is_ours(strip.action) and strip.action not in removed + kept:
-                    (kept if strip.action[TAG] == REFINE and fcurves(strip.action) else removed).append(strip.action)
-            data.nla_tracks.remove(track)
-        restore_pushed(owner)
-    apply_static(owner, forget=True)
+    for track, roles in (_our_tracks(owner) if data is not None else ()):
+        if not which(roles):
+            continue
+        for strip in track.strips:
+            if is_ours(strip.action) and strip.action not in removed + kept:
+                (kept if strip.action[TAG] == REFINE and fcurves(strip.action) else removed).append(strip.action)
+        data.nla_tracks.remove(track)
     return removed, kept
+
+
+def _after_removal(owner):
+    """Once neither a bake nor a prep is left, put back the action they pushed down and forget the static values;
+    put the static values back in any case."""
+    left = bool(_our_tracks(owner))
+    if not left and owner.animation_data is not None:
+        restore_pushed(owner)
+    apply_static(owner, forget=not left)
+
+
+def remove_bake(owner):
+    """Remove the add-on's bake and refine tracks from `owner` (the prep track stays), and put back the static
+    values and, if no prep is left, the action the bake pushed down. Returns (removed actions, kept refine actions
+    that hold keys)."""
+    removed, kept = _remove_tracks(owner, lambda roles: PREP not in roles)
+    _after_removal(owner)
+    return removed, kept
+
+
+def remove_prep(owner):
+    """Remove the prep track from `owner` (the bake stays), as `remove_bake` does. Returns the removed actions."""
+    removed, _ = _remove_tracks(owner, lambda roles: PREP in roles)
+    _after_removal(owner)
+    return removed

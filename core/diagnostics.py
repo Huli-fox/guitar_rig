@@ -2,7 +2,8 @@
 
 A bake records, per frame, each wrist's correction (how far the collider, the magnets and the reach clamp moved
 its target from the mocap wrist), the IK's miss, the chest collider's push, and for each magnet that saw the hand
-its distance d (signed for planes: negative behind the plane) and its weight w; and for the frame the neck swing,
+its distance d (signed for planes: negative behind the plane) and its weight w, and on the pass-through hands how
+far the quick wrist motion that passed through the magnets reached; and for the frame the neck swing,
 the fretting wrist's turn, the solve passes and whether they settled, the mode and the neck aim weight.
 
 The curves are keyed as animated custom properties of an empty, GTR_Diagnostics (the scene's
@@ -67,6 +68,8 @@ class Recorder:
             self._set(f"{side} wrist correction (cm)", i, (side_result.target - side_result.fk_wrist).length * cm,
                       'CORRECTION', side)
             self._set(f"{side} IK miss (mm)", i, side_result.error * cm * 10.0, 'IK_MISS', side)
+            if side_result.passthrough is not None:
+                self._set(f"{side} pass-through (cm)", i, side_result.passthrough.length * cm, 'PASSTHROUGH', side)
             contact = side_result.collider
             if contact is not None:
                 pushed = contact.moved.length * cm if contact.weight > 0.0 else 0.0
