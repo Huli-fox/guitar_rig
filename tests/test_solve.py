@@ -15,8 +15,8 @@ from test_guitar import normalize, reset_scene
 TOLERANCE = 2e-5            # metres: the IK reaches its goal to about 1e-7 m, float32 adds the rest
 
 
-def setup_scene(unit=1.0, build_rig=None):
-    """A character (VRoid, or `build_rig()`) and the synthetic guitar with the acoustic preset, the rig built.
+def setup_scene(unit=1.0, build_rig=None, preset='acoustic'):
+    """A character (VRoid, or `build_rig()`) and the synthetic guitar with `preset`, the rig built.
     `unit`: scene units per metre (100 for a centimetre scene). Returns the armature and GTR_ROOT."""
     reset_scene()
     scene = bpy.context.scene
@@ -27,6 +27,7 @@ def setup_scene(unit=1.0, build_rig=None):
     assert bpy.ops.gtr.calibrate() == {'FINISHED'}
     objects, _ = guitars.build(matrix=Matrix.Scale(unit, 4) @ guitars.world_placement())
     root = normalize(objects)
+    scene.gtr.preset = preset
     assert bpy.ops.gtr.load_preset() == {'FINISHED'}
     bpy.context.view_layer.objects.active = obj
     assert bpy.ops.gtr.build_rig() == {'FINISHED'}
@@ -174,6 +175,22 @@ class FretboardTest(unittest.TestCase):
         self.assertLess((wrist(obj, 'L') - barrier).dot(normal), -0.05)
         assert bpy.ops.gtr.solve_frame() == {'FINISHED'}
         self.assertLess(abs((wrist(obj, 'L') - barrier).dot(normal)), TOLERANCE)
+
+    def test_nut_barrier_holds_the_wrist(self):
+        """The ukulele preset's nut barrier (SAO magnet 6): a wrist past it toward the headstock is put on it."""
+        obj, root = setup_scene(preset='ukulele')
+        bpy.context.scene.gtr.mode = 'ALIGN'
+        magnets_only(bpy.context.scene.gtr)
+        found, pivot, direction = self.pose_left(obj, root, 0.03, 0.02)
+        barrier, normal = found["NUT_BARRIER"]
+        along = (barrier - pivot).dot(direction) + 0.04
+        self.pose_left(obj, root, 0.03, 0.02, along=along)
+        self.assertLess((wrist(obj, 'L') - barrier).dot(normal), -0.03)
+        assert bpy.ops.gtr.solve_frame() == {'FINISHED'}
+        self.assertLess(abs((wrist(obj, 'L') - barrier).dot(normal)), TOLERANCE)
+        result = solver.shown_result(bpy.context.scene)
+        weights = {bpy.context.scene.gtr.magnets[i].preset_id: hit.weight for i, hit in result.sides['L'].hits}
+        self.assertEqual(weights["NUT_BARRIER"], 1.0)
 
     def test_offset_hand_converges(self):
         """A hand that does not start at the forearm tail: the IK goal is corrected over the iterations."""

@@ -8,12 +8,11 @@ from mathutils import Euler, Matrix, Quaternion, Vector
 
 import guitars
 import rigs
+import sao
 from guitar_rig.core import guitar_frame, landmarks, mount, presets
 from guitar_rig.core.mathx import auto_scale_factor, rotation_angle
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SAO_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "guitar_collection_v9.1"))
-SAO_ACOUSTIC_GLB = os.path.join(SAO_DIR, "props", "acoustic_guitar", "acoustic_guitar.glb")
 SAO_UNIT = 0.088 / 11.0         # metres per GLB unit of the acoustic prop
 TMP_DIR = os.path.join(os.path.dirname(HERE), ".tmp")
 
@@ -312,6 +311,30 @@ class GuitarOperatorTest(unittest.TestCase):
         assert bpy.ops.gtr.load_preset() == {'FINISHED'}
         self.assertEqual(sorted(obj.name for obj in landmarks.find(root).values()), names)
 
+    def test_switch_presets(self):
+        """The ukulele preset adds its Nut Barrier and the magnet on it; another preset takes both away again,
+        unless the magnets are kept."""
+        root = normalize(self.objects)
+        settings = bpy.context.scene.gtr
+        settings.preset = 'ukulele'
+        assert bpy.ops.gtr.load_preset() == {'FINISHED'}
+        found = landmarks.find(root)
+        self.assertEqual(len(settings.magnets), 7)
+        self.assertEqual(settings.magnets[6].preset_id, "NUT_BARRIER")
+        self.assertIs(settings.magnets[6].landmark_a, found["NUT_BARRIER"])
+        to_guitar = self.placement.inverted()
+        barrier = to_guitar @ found["NUT_BARRIER"].matrix_world.translation
+        self.assertTrue(0.0 < barrier.x < guitars.NUT_X)
+        normal = to_guitar.to_3x3() @ (found["NUT_BARRIER"].matrix_world.to_3x3() @ Vector((0, 0, 1)))
+        self.assertLess(normal.normalized().x, -0.99)
+        settings.preset = 'acoustic'
+        assert bpy.ops.gtr.load_preset(magnets=False) == {'FINISHED'}
+        self.assertIn("NUT_BARRIER", landmarks.find(root))
+        assert bpy.ops.gtr.load_preset() == {'FINISHED'}
+        self.assertNotIn("NUT_BARRIER", landmarks.find(root))
+        self.assertEqual(len(settings.magnets), 6)
+        self.assertFalse(landmarks.missing(root))
+
     def test_load_keeps_a_captured_mount(self):
         normalize(self.objects)
         settings = bpy.context.scene.gtr
@@ -420,79 +443,142 @@ class MountOperatorTest(unittest.TestCase):
 
 # SAO equivalence -----------------------------------------------------------------------------------------------
 
-GLTF_TO_BLENDER = Matrix(((1.0, 0.0, 0.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)))
+SAO_PRESETS = ("acoustic", "bass", "strat", "ukulele")     # built-in presets made from sao.SCENES[id]
+SAO_ROLES = {0: ("STRUM_A", "STRUM_B"), 1: ("STRUM_X_PLANE",), 2: ("STRING_PLANE",), 3: ("FRETBOARD_PLANE",),
+             4: ("NECK_BODY_BARRIER",), 5: ("FRETBOARD_EDGE",), 6: ("NUT_BARRIER",)}    # SAO magnet -> its points
+SAO_FINGERS = {"人": "INDEX", "中": "MIDDLE", "薬": "RING"}
 
 
-@unittest.skipUnless(os.path.exists(SAO_ACOUSTIC_GLB), "the SAO guitar collection is not next to the add-on")
-class SaoAcousticTest(unittest.TestCase):
-    """The acoustic preset on SAO's own acoustic prop reproduces scene.json."""
+def xyz(d):
+    return [d["x"], d["y"], d["z"]]
 
-    def setUp(self):
+
+@unittest.skipUnless(sao.available(), "the SAO guitar collection is not next to the add-on")
+class SaoPresetFileTest(unittest.TestCase):
+    """Each SAO preset file holds the numbers of its scene file."""
+
+    def test_presets_match_their_scenes(self):
+        for preset_id in SAO_PRESETS:
+            with self.subTest(preset_id):
+                data = sao.scene(preset_id)
+                para = data["object3D_list"][0]["model_para"]
+                bone = para["parent_bone"]
+                aim = bone["rotation"]["align_with_external_point"]
+                tracking = next(iter(data["on"]["gesture"].values()))["left|horns"]["action"]["motion_tracking"]
+                raw = presets.load(preset_id).raw
+                self.assertTrue(raw["verified"])
+                self.assertEqual(raw["sao_placement_scale"], para["placement"]["scale"])
+                self.assertEqual(raw["mount"], {"sao_bone": bone["name"], "sao_position": xyz(bone["position"]),
+                                                "sao_rotation": xyz(bone["rotation"])})
+                self.assertEqual(raw["aim"], {"sao_offset": xyz(aim["external_point"]["offset"])})
+                wrist = tracking["hand_tracking"]["rotation_reference"]["left"]
+                self.assertEqual(raw["wrist"], {"sao_offset": xyz(wrist["offset"]), "weight": wrist["weight"]})
+                points = raw["landmarks"]
+                self.assertEqual(points["NECK_PIVOT"]["position"], xyz(aim["reference_origin"]))
+                self.assertEqual(points["NUT"]["position"], xyz(aim["reference_point"]))
+                scene_magnets = tracking["arm_tracking"]["transformation"]["position"]["magnet"]
+                self.assertEqual([entry["sao_index"] for entry in raw["magnets"]], list(range(len(scene_magnets))))
+                for entry, magnet in zip(raw["magnets"], scene_magnets):
+                    self.check_magnet(entry, magnet, points)
+
+    def check_magnet(self, entry, magnet, points):
+        (hand, options), = magnet["hand_affected"].items()
+        self.assertEqual(entry["hand"], hand[0].upper())
+        self.assertEqual(entry["kind"], magnet["magnet_type"].upper())
+        self.assertEqual(entry["effective_distance"], magnet["effective_distance"])
+        self.assertEqual(entry["power"], magnet["power"])
+        self.assertEqual(entry.get("crossable", False), magnet.get("plane_crossable", False))
+        self.assertEqual(entry.get("use_default_rotation", False), magnet.get("use_default_rotation", False))
+        self.assertEqual(entry.get("hand_offset_mode") == "PARENT_BONE", options.get("offset") == "parent_bone")
+        self.assertEqual(entry.get("filter") == "ROTATION_BASED", "reference_point_filter" in magnet)
+        fingertips = options.get("offset_fingertip_v2") or options.get("offset_fingertip")
+        if fingertips is None:
+            self.assertNotIn("fingertip_mode", entry)
+        else:
+            self.assertEqual(entry["fingertip_mode"], "V2")
+            self.assertEqual(entry["fingers"], [SAO_FINGERS[finger] for finger in fingertips["finger_list"]])
+            self.assertEqual(entry.get("fingertip_offset", 0), fingertips.get("reference_point_offset_distance", 0))
+            self.assertEqual(entry.get("push_only", False), fingertips.get("push_only", False))
+        roles = SAO_ROLES[entry["sao_index"]]
+        self.assertEqual(entry["a"], roles[0])
+        self.assertEqual(points[roles[0]]["position"], xyz(magnet["reference_point"]))
+        if "line_end" in magnet:
+            self.assertEqual(entry["b"], roles[1])
+            self.assertEqual(points[roles[1]]["position"], xyz(magnet["line_end"]))
+        if "plane_normal" in magnet:
+            self.assertEqual(points[roles[0]]["normal"], xyz(magnet["plane_normal"]))
+
+
+@unittest.skipUnless(sao.available(), "the SAO guitar collection is not next to the add-on")
+class SaoPresetTest(unittest.TestCase):
+    """Each SAO preset on its own prop reproduces its scene file."""
+
+    def load(self, preset_id):
+        """The calibrated VRoid character, and SAO's prop for the preset normalised with the preset loaded.
+        Returns (sao.Prop, the prop's empty, GTR_ROOT)."""
         reset_scene()
         self.rig = rigs.vroid()
         bpy.context.view_layer.objects.active = self.rig
         assert bpy.ops.gtr.auto_map_bones() == {'FINISHED'}
         assert bpy.ops.gtr.calibrate() == {'FINISHED'}
-        before = set(bpy.data.objects)
-        bpy.ops.import_scene.gltf(filepath=SAO_ACOUSTIC_GLB)
-        imported = [obj for obj in bpy.data.objects if obj not in before]
-        # SAO's placement.scale 0.088 turns GLB units into MMD units; / 11 gives metres. The empty stands for
-        # the prop's object3D.
-        self.prop = bpy.data.objects.new("SAO_prop", None)
-        bpy.context.scene.collection.objects.link(self.prop)
-        self.prop.scale = (SAO_UNIT,) * 3
-        for obj in imported:
-            if obj.parent is None:
-                obj.parent = self.prop
-        bpy.context.view_layer.update()
-        self.root = normalize([obj for obj in imported if obj.type == 'MESH'])
-        bpy.context.scene.gtr.preset = 'acoustic'
+        prop = sao.Prop(preset_id)
+        empty, meshes = prop.load()
+        root = normalize(meshes)
+        bpy.context.scene.gtr.preset = preset_id
         assert bpy.ops.gtr.load_preset() == {'FINISHED'}
+        return prop, empty, root
 
-    def glb_to_world(self, p):
-        """World position of a GLB point of the (unmoved) prop, and the GLB axes' world rotation."""
-        return self.prop.matrix_world @ (GLTF_TO_BLENDER @ Vector(p))
-
-    def test_landmarks_match_scene_json(self):
-        self.assertEqual(self.root.gtr_guitar.fit_method, 'NECK')
-        np.testing.assert_allclose(self.root.gtr_guitar.fit_scale, 1.0, atol=1e-5)   # 6-digit preset
-        found = landmarks.find(self.root)
-        raw = presets.load("acoustic").raw["landmarks"]
-        for role, entry in raw.items():
-            with self.subTest(role):
-                obj = found[role]
-                self.assertLess((obj.matrix_world.translation - self.glb_to_world(entry["position"])).length, 1e-5)
-                if "normal" in entry:
-                    normal = obj.matrix_world.to_3x3().normalized() @ Vector((0, 0, 1))
-                    expected = GLTF_TO_BLENDER @ Vector(entry["normal"])
-                    self.assertGreater(normal.dot(expected), 1.0 - 1e-6)
-        # The GLB origin is the preset origin.
-        self.assertLess((self.root.matrix_world.translation - self.glb_to_world((0, 0, 0))).length, 1e-6)
+    def test_landmarks_match_the_scenes(self):
+        for preset_id in SAO_PRESETS:
+            with self.subTest(preset_id):
+                prop, empty, root = self.load(preset_id)
+                self.assertEqual(root.gtr_guitar.fit_method, 'NECK')
+                # The reference is stored to the micrometre: up to 1e-4 of the 2 to 4 cm neck thickness.
+                np.testing.assert_allclose(root.gtr_guitar.fit_scale, 1.0, atol=1e-4)
+                found = landmarks.find(root)
+                preset = presets.load(preset_id)
+                self.assertEqual(set(found), set(preset.landmarks))
+                self.assertEqual(len(bpy.context.scene.gtr.magnets), len(preset.magnets))
+                for role, entry in preset.raw["landmarks"].items():
+                    obj = found[role]
+                    expected = prop.to_world(empty, entry["position"])
+                    self.assertLess((obj.matrix_world.translation - expected).length, 1e-5, role)
+                    if "normal" in entry:
+                        normal = obj.matrix_world.to_3x3().normalized() @ Vector((0, 0, 1))
+                        self.assertGreater(normal.dot(prop.direction_to_world(empty, entry["normal"])), 1.0 - 1e-6)
+                # The GLB origin is the preset origin.
+                self.assertLess((root.matrix_world.translation - prop.to_world(empty, (0, 0, 0))).length, 5e-6)
 
     def test_mount_matches_index_js(self):
         """index.js: obj.pos = chest + rot·auto_scale([x, y, -z]); obj.q = rot·Euler(-rx, -ry, rz, 'YXZ'),
         in three.js coordinates, which are the character frame for SAO's avatars."""
-        chest_bone = self.rig.pose.bones["J_Bip_C_Chest"]
-        rigs.rotate_bone(self.rig, "J_Bip_C_Chest", Quaternion((0.2, -0.5, 0.1), 0.4))
-        assert bpy.ops.gtr.place_on_mount() == {'FINISHED'}
-        bpy.context.view_layer.update()
-
-        char_world = rigs.BLENDER_AXES.to_quaternion()       # three.js axes -> Blender world
-        chest_rot = (self.rig.matrix_world @ chest_bone.matrix).to_quaternion()
-        rot = char_world.inverted() @ chest_rot @ chest_bone.bone.matrix_local.to_quaternion().inverted() @ char_world
-
         def about(axis, degrees):
             return Quaternion(axis, math.radians(degrees))
-        obj_q = rot @ about((0, 1, 0), -15.0) @ about((1, 0, 0), -10.0) @ about((0, 0, 1), 5.0)
-        cal = self.rig.gtr_char.calibration
-        obj_pos = rot @ (Vector((-1.3, -0.2, 1.8)) * auto_scale_factor(cal.ratio_spine) / 11.0)
 
-        chest = self.rig.matrix_world @ chest_bone.head
-        for role, entry in presets.load("acoustic").raw["landmarks"].items():
-            glb = Vector(entry["position"]) * SAO_UNIT        # prop scale 0.088 of MMD units: metres
-            expected = chest + char_world @ (obj_pos + obj_q @ glb)
-            actual = landmarks.find(self.root)[role].matrix_world.translation
-            self.assertLess((actual - expected).length, 1e-5, role)
+        for preset_id in SAO_PRESETS:
+            with self.subTest(preset_id):
+                prop, _, root = self.load(preset_id)
+                chest_bone = self.rig.pose.bones["J_Bip_C_Chest"]
+                rigs.rotate_bone(self.rig, "J_Bip_C_Chest", Quaternion((0.2, -0.5, 0.1), 0.4))
+                assert bpy.ops.gtr.place_on_mount() == {'FINISHED'}
+                bpy.context.view_layer.update()
+
+                char_world = rigs.BLENDER_AXES.to_quaternion()       # three.js axes -> Blender world
+                chest_rot = (self.rig.matrix_world @ chest_bone.matrix).to_quaternion()
+                rot = (char_world.inverted() @ chest_rot @ chest_bone.bone.matrix_local.to_quaternion().inverted()
+                       @ char_world)
+                raw = presets.load(preset_id).raw
+                (x, y, z), (rx, ry, rz) = raw["mount"]["sao_position"], raw["mount"]["sao_rotation"]
+                obj_q = rot @ about((0, 1, 0), -ry) @ about((1, 0, 0), -rx) @ about((0, 0, 1), rz)
+                cal = self.rig.gtr_char.calibration
+                obj_pos = rot @ (Vector((x, y, -z)) * auto_scale_factor(cal.ratio_spine) / 11.0)
+
+                chest = self.rig.matrix_world @ chest_bone.head
+                for role, entry in raw["landmarks"].items():
+                    glb = Vector(entry["position"]) * prop.unit       # placement.scale of MMD units: metres
+                    expected = chest + char_world @ (obj_pos + obj_q @ glb)
+                    actual = landmarks.find(root)[role].matrix_world.translation
+                    self.assertLess((actual - expected).length, 1e-5, role)
 
 
 class LandmarkPanelTest(unittest.TestCase):

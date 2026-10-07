@@ -79,8 +79,8 @@ The solve and the bake read the GuitarPrep layer as the mocap. If you apply Prep
    - It creates `GTR_ROOT`, with +X along the neck toward the headstock and +Z out of the strings, and parents the guitar to it.
    - If the model is not real size, set **Real Length** in the operator's redo panel.
 2. Check the axes in the panel or the viewport. Use **Flip X** or **Flip Z** if the headstock or the string face is the wrong way.
-3. Choose a preset and click **Load Preset**. It places the landmarks, the magnets, a mount estimate, and the aim and wrist settings. Only the **Acoustic Guitar** preset ships today.
-4. Click **Landmarks > Auto-Place** (see [Auto-placed landmarks](#auto-placed-landmarks)). This is recommended when your guitar differs from the preset's, for example an electric with cutaways or a tilted neck.
+3. Choose the [preset](#presets) closest to your instrument and click **Load Preset**. It places the landmarks, the magnets, a mount estimate, and the aim and wrist settings.
+4. Click **Landmarks > Auto-Place** (see [Auto-placed landmarks](#auto-placed-landmarks)). This is recommended when no preset is close to your guitar, for example an electric with the Acoustic Guitar preset, or a tilted neck.
 5. Check the landmarks. Click an entry in the checklist to select its empty, or to add it at the 3D cursor if it is missing. Move or rotate the empties as needed. For a plane, the empty's local Z axis is the plane's normal.
 
 ### 4. Mount and wrist
@@ -136,6 +136,23 @@ The arm channels:
 - **Chest Bone** (the default): `GTR_ROOT` is parented to the chest bone and keyed relative to it, so later edits to the body carry the guitar along.
 - **World**: the guitar is keyed in world space.
 
+## Presets
+
+Each preset comes from one of SAO's guitar scenes and keeps that scene's numbers: the landmarks, the magnets, the mount estimate, and the aim and wrist settings. Load Preset fits the landmarks to your guitar's neck and body.
+
+| Preset | SAO scene | Differences |
+|---|---|---|
+| Acoustic Guitar | `scene.json` | The default |
+| Bass Guitar | `scene - bass guitar.json` | Mounted about 2 cm lower, and turned 10° further about the character's left–right axis |
+| Stratocaster | `scene - stratocaster guitar.json` | Mounted like the bass |
+| Ukulele | `scene - ukulele.json` | Mounted about 6 cm closer to the middle of the chest and rolled 10° further; a 26 cm strum line that reaches up the neck; a Nut Barrier |
+
+The magnet settings are the same in all four; their landmarks are placed on each prop. The tests check every preset against its scene file.
+
+On SAO's electric guitars and bass, the Stratocaster and Bass Guitar presets put the strum line closer to where SAO has it than the Acoustic Guitar preset does, also after Auto-Place. With Load Preset alone they put the Neck/Body Barrier within 1 cm of SAO's; Auto-Place moves it to the heel, which is 2–3 cm away on these guitars.
+
+The Ukulele preset is the only one with a Nut Barrier landmark. When you load another preset with its magnets, Load Preset removes a Nut Barrier that no magnet uses.
+
 ## Landmarks
 
 Landmarks are empties under `GTR_ROOT`. Each has a role, stored in its `gtr_role` custom property; the magnets and the neck aim read them.
@@ -147,7 +164,7 @@ Landmarks are empties under `GTR_ROOT`. Each has a role, stored in its `gtr_role
 | Fretboard Plane | Fretboard surface, normal +Z | Fretting hand snaps onto it |
 | Fretboard Edge | Through the lower edge, normal +Y | Fretting hand stays above the edge |
 | Neck/Body Barrier | Where the body starts under the neck, normal +X | Fretting wrist stays on the neck |
-| Nut Barrier (optional) | Near the nut, normal −X | Fretting wrist stays off the headstock |
+| Nut Barrier (optional) | Near the nut, normal −X | Fretting wrist stays off the headstock (Ukulele preset) |
 | Strum Line A/B | Body and neck ends of the strum line | Picking wrist is pulled to it |
 | Strum Position | At Strum Line A, normal +X | Holds the picking hand's position along the strings |
 | String Plane | Above the strings, normal +Z | Picking fingertips stay above it |
@@ -172,10 +189,12 @@ Compared with the plain fit that Load Preset does:
 - **Fretboard planes:** they follow the fretboard's tilt.
 - **Strum line:** it keeps its share of the body length from the heel. On an acoustic guitar that puts it on the soundhole.
 
-The tests check Auto-Place against SAO's own hand-placed points on five of its guitars:
+The tests check Auto-Place with the Acoustic Guitar preset against SAO's own hand-placed points on five of its guitars:
 - **Barrier:** within 2 cm.
 - **Neck lines:** within about 1 cm, which is how much SAO's own points scatter.
 - **Strum line:** within 8 cm, closer than the plain fit. SAO's strum lines are 9–26 cm long and tuned per instrument.
+
+With each preset on its own SAO guitar, Auto-Place puts every landmark within 2 mm of SAO's.
 
 Auto-Place reports a confidence, with messages:
 - **High:** the neck, heel and body were all found.
@@ -198,9 +217,9 @@ A magnet is a line or a plane on the guitar that acts on one wrist. Magnets act 
 | Filter | Smooths the magnet's pull from frame to frame during a bake. **Rotation** filters the angle about the guitar origin. |
 | Hysteresis | A snap magnet that held the hand reaches this much further on the next frame. |
 
-The acoustic preset's magnets, as in SAO:
+The presets' magnets, as in SAO:
 - **Right hand:** the strum line, the strum position and the string barrier.
-- **Left hand:** the fretboard plane, the neck/body barrier and the fretboard edge.
+- **Left hand:** the fretboard plane, the neck/body barrier and the fretboard edge, plus the nut barrier on the Ukulele preset.
 
 A magnet that pulls the wrist toward a line shrinks the wrist's distance from it, so it would take back most of a stroke. **Pass-Through** (in the Magnets panel, on for the right hand) lets the quick wrist motion through: the magnets act on the slow part of the wrist's path relative to the chest (below 1 Hz by default), the strokes are added back on top, and the barriers and the chest collider then push the result out again. It is off for the fretting hand, which the fretboard magnets must hold. The bake reads every frame's wrist first for this; Solve Frame reads 2 s each side of its frame. The diagnostics show it as `R pass-through (cm)`.
 

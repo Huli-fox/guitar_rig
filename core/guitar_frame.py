@@ -199,11 +199,16 @@ def loose_parts(count, edges):
 
 
 def gather(objects, depsgraph, to_space=None):
-    """Geometry of the evaluated mesh `objects` in world space, or mapped by the 4x4 `to_space` (world -> target)."""
+    """Geometry of the evaluated mesh `objects` in world space, or mapped by the 4x4 `to_space` (world -> target).
+
+    The objects are taken in name order, so that the measurements do not depend on the order they are given in: the
+    seeded surface sampling depends on the order of the triangles, and on SAO's props another order moves the
+    measured neck top or back by up to 2 mm.
+    """
     to_space = np.identity(4) if to_space is None else np.asarray(to_space, dtype=float)
     triangles, triangle_parts, vertices, part_ids = [], [], [], []
     next_id = 0
-    for obj in objects:
+    for obj in sorted(objects, key=lambda obj: obj.name_full):
         evaluated = obj.evaluated_get(depsgraph)
         mesh = evaluated.to_mesh()
         try:

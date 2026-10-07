@@ -281,6 +281,19 @@ class GTR_OT_flip_frame(bpy.types.Operator):
 
 # Presets -------------------------------------------------------------------------------------------------------
 
+def _remove_unused_landmarks(settings, root, preset):
+    """Remove the optional landmarks that `preset` does not have and no magnet uses, such as the ukulele's Nut
+    Barrier after another preset is loaded. Returns messages."""
+    used = {item.landmark_a for item in settings.magnets} | {item.landmark_b for item in settings.magnets}
+    messages = []
+    for role_id, obj in landmarks.find(root).items():
+        role = landmarks.ROLE_BY_ID[role_id]
+        if not role.required and role_id not in preset.landmarks and obj not in used:
+            bpy.data.objects.remove(obj)
+            messages.append(('INFO', f"Removed the {role.label} landmark: the {preset.name} preset does not use it."))
+    return messages
+
+
 def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
     settings = context.scene.gtr
     root = settings.guitar_root
@@ -293,6 +306,7 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
         messages += presets.store_magnets(settings.magnets, preset.magnets, found, fitted)
         apply_mode(settings, settings.mode)
         settings.active_magnet_index = 0
+        messages += _remove_unused_landmarks(settings, root, preset)
     if mount and preset.mount_t is not None:
         settings.mount_t = preset.mount_t
         settings.mount_q = preset.mount_q

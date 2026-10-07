@@ -26,13 +26,13 @@ def line_distance(point, a, b):
     return (v - d * v.dot(d)).length
 
 
-def setup_prop(key):
-    """SAO's prop of scene `key`, normalised, with the acoustic preset loaded. Returns (Prop, empty, GTR_ROOT)."""
+def setup_prop(key, preset='acoustic'):
+    """SAO's prop of scene `key`, normalised, with `preset` loaded. Returns (Prop, empty, GTR_ROOT)."""
     reset_scene()
     prop = sao.Prop(key)
     empty, meshes = prop.load()
     root = normalize(meshes)
-    bpy.context.scene.gtr.preset = 'acoustic'
+    bpy.context.scene.gtr.preset = preset
     assert bpy.ops.gtr.load_preset() == {'FINISHED'}
     return prop, empty, root
 
@@ -232,14 +232,18 @@ class AutoLandmarkTest(unittest.TestCase):
             self.assertLess((placement.landmarks[role][0] - spec.position).length, 0.002, role)
 
     def test_reference_reproduces_the_preset(self):
-        """On measurements equal to the preset's reference, the landmarks are the preset's own."""
-        preset = presets.load("acoustic")
-        placement = autoland.place(preset, preset.reference)
-        for role, spec in preset.landmarks.items():
-            position, normal = placement.landmarks[role]
-            self.assertLess((position - spec.position).length, 1e-9, role)
-            if spec.normal is not None:
-                self.assertLess((normal - spec.normal).length, 1e-6, role)
+        """On measurements equal to a preset's reference, the landmarks are the preset's own."""
+        for preset_id in presets.builtin_ids():
+            with self.subTest(preset_id):
+                preset = presets.load(preset_id)
+                placement = autoland.place(preset, preset.reference)
+                self.assertEqual(placement.confidence, 'HIGH')
+                self.assertEqual(set(placement.landmarks), set(preset.landmarks))
+                for role, spec in preset.landmarks.items():
+                    position, normal = placement.landmarks[role]
+                    self.assertLess((position - spec.position).length, 1e-9, role)
+                    if spec.normal is not None:
+                        self.assertLess((normal - spec.normal).length, 1e-6, role)
 
     def test_flip_goes_back_to_the_preset_fit(self):
         root = self.build()
@@ -282,3 +286,18 @@ class SaoAutoLandmarkTest(unittest.TestCase):
         # strum line.
         self.assertLess(totals["auto"]["barrier"], 0.2 * totals["fit"]["barrier"])
         self.assertLess(totals["auto"]["strum middle"], totals["fit"]["strum middle"])
+
+    def test_own_presets(self):
+        """Each SAO preset on its own prop: Auto-Place puts the landmarks where SAO has them, the Nut Barrier too."""
+        for key in ("bass", "strat", "ukulele"):
+            with self.subTest(key):
+                prop, empty, root = setup_prop(key, preset=key)
+                self.assertEqual(bpy.ops.gtr.auto_landmarks(), {'FINISHED'})
+                self.assertEqual(root.gtr_guitar.landmark_confidence, 'HIGH')
+                for name, distance in compare(prop, empty, root).items():
+                    self.assertLess(distance, 0.002, name)
+                if key == "ukulele":
+                    magnet = prop.magnet("left", "plane", (-1, 0, 0))
+                    distance = (prop.to_world(empty, magnet["point"]) - world_point(root, "NUT_BARRIER")).dot(
+                        world_normal(root, "NUT_BARRIER"))
+                    self.assertLess(abs(distance), 0.002)

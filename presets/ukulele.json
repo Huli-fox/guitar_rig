@@ -1,0 +1,71 @@
+{
+  "format": 3,
+  "name": "Ukulele",
+  "description": "XR Animator's ukulele scene (guitar_collection_v9.1/scene - ukulele.json)",
+  "source": "guitar_collection_v9.1/scene - ukulele.json and props/ukulele/ukulele.glb",
+  "verified": true,
+  "notes": [
+    "Positions are SAO's, in GLB units of the ukulele prop; placement.scale 2.2 makes 1 unit 0.2 m.",
+    "The mount is only a starting guess: pose the guitar on the character and use Capture Mount.",
+    "Magnet 3 uses SAO's offset_fingertip (v1), which min.js runs through the same code as v2: it is fingertip v2 without push-only.",
+    "Magnet 6, the nut barrier, is only in the ukulele scene: its neck is short enough for the fretting hand to slide past the nut.",
+    "SAO's string plane point is the strum line's start; only its height above the fretboard matters.",
+    "mocap_factor settings are ignored: they only matter for external VMC input."
+  ],
+  "sao_placement_scale": 2.2,
+  "frame": [0.99999917, 0.00011482, 0.00130006, -0.00017282],
+  "reference": {
+    "bounds_min": [-0.180037, -0.096588, -0.023638],
+    "bounds_max": [0.391967, 0.096665, 0.031059],
+    "neck": {"joint_x": 0.088805, "nut_x": 0.268986, "width_joint": 0.047861, "width_nut": 0.034793, "center_y": -7.1e-05, "fret_z": 0.027029, "back_z": -0.012921, "heel_x": 0.114545, "top_joint": 0.026892, "top_nut": 0.026531}
+  },
+  "landmarks": {
+    "NECK_PIVOT": {"position": [0.3891072, -0.1219327, 0.1346104]},
+    "NUT": {"position": [1.324375, -0.08734036, 0.1346102]},
+    "FRETBOARD_PLANE": {"position": [0.3891072, -0.1219327, 0.1346104], "normal": [0, 0, 1]},
+    "FRETBOARD_EDGE": {"position": [0.3891072, -0.1219327, 0.1346104], "normal": [0, 1, 0]},
+    "NECK_BODY_BARRIER": {"position": [0.5891072, 0, 0], "normal": [1, 0, 0]},
+    "NUT_BARRIER": {"position": [1.124375, 0, 0], "normal": [-1, 0, 0]},
+    "STRUM_A": {"position": [-0.2927508, 0.4245723, 0.3170309]},
+    "STRUM_B": {"position": [1.0, 0.4245723, 0.3170309]},
+    "STRUM_X_PLANE": {"position": [-0.2927508, 0.4245723, 0.3170309], "normal": [1, 0, 0]},
+    "STRING_PLANE": {"position": [-0.2927508, 0.4245723, 0.3170309], "normal": [0, 0, 1]}
+  },
+  "mount": {"sao_bone": "上半身2", "sao_position": [-0.6, -0.2, -1.8], "sao_rotation": [10, 15, 15]},
+  "aim": {"sao_offset": [0.6, -0.25, 0]},
+  "wrist": {"sao_offset": [60, 180, 0], "weight": 0.5},
+  "magnets": [
+    {
+      "sao_index": 0, "preset_id": "STRUM_LINE", "name": "Strum Line", "hand": "R", "kind": "LINE",
+      "a": "STRUM_A", "b": "STRUM_B", "effective_distance": 3, "power": 0
+    },
+    {
+      "sao_index": 1, "preset_id": "STRUM_POSITION", "name": "Strum Position", "hand": "R", "kind": "PLANE",
+      "a": "STRUM_X_PLANE", "crossable": true, "effective_distance": 2, "power": 0
+    },
+    {
+      "sao_index": 2, "preset_id": "STRING_BARRIER", "name": "String Barrier", "hand": "R", "kind": "PLANE",
+      "a": "STRING_PLANE", "crossable": false, "effective_distance": 3, "power": -99,
+      "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"], "fingertip_offset": -0.1824205, "push_only": true
+    },
+    {
+      "sao_index": 3, "preset_id": "FRETBOARD_PLANE", "name": "Fretboard Plane", "hand": "L", "kind": "PLANE",
+      "a": "FRETBOARD_PLANE", "crossable": true, "effective_distance": 6, "power": 1, "use_default_rotation": true,
+      "hand_offset_mode": "PARENT_BONE", "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"]
+    },
+    {
+      "sao_index": 4, "preset_id": "NECK_BODY_BARRIER", "name": "Neck/Body Barrier", "hand": "L", "kind": "PLANE",
+      "a": "NECK_BODY_BARRIER", "crossable": false, "effective_distance": 3, "power": -99,
+      "use_default_rotation": true
+    },
+    {
+      "sao_index": 5, "preset_id": "FRETBOARD_EDGE", "name": "Fretboard Edge", "hand": "L", "kind": "PLANE",
+      "a": "FRETBOARD_EDGE", "crossable": false, "effective_distance": 6, "power": -99, "use_default_rotation": true,
+      "hand_offset_mode": "PARENT_BONE", "filter": "ROTATION_BASED"
+    },
+    {
+      "sao_index": 6, "preset_id": "NUT_BARRIER", "name": "Nut Barrier", "hand": "L", "kind": "PLANE",
+      "a": "NUT_BARRIER", "crossable": false, "effective_distance": 3, "power": -99
+    }
+  ]
+}

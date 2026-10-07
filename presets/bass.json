@@ -1,34 +1,34 @@
 {
   "format": 3,
-  "name": "Acoustic Guitar",
-  "description": "XR Animator's acoustic guitar scene (guitar_collection_v9.1/scene.json)",
-  "source": "guitar_collection_v9.1/scene.json and props/acoustic_guitar/acoustic_guitar.glb",
+  "name": "Bass Guitar",
+  "description": "XR Animator's bass guitar scene (guitar_collection_v9.1/scene - bass guitar.json)",
+  "source": "guitar_collection_v9.1/scene - bass guitar.json and props/bass_guitar/bass_guitar_low_poly_freebie_v02.glb",
   "verified": true,
   "notes": [
-    "Positions are SAO's, in GLB units of the acoustic_guitar prop; placement.scale 0.088 makes 1 unit 0.008 m.",
+    "Positions are SAO's, in GLB units of the bass_guitar prop; placement.scale 5.5599 makes 1 unit 0.505447 m.",
     "The mount is only a starting guess: pose the guitar on the character and use Capture Mount.",
     "Magnet 3 uses SAO's offset_fingertip (v1), which min.js runs through the same code as v2: it is fingertip v2 without push-only.",
     "mocap_factor settings are ignored: they only matter for external VMC input."
   ],
-  "sao_placement_scale": 0.088,
-  "frame": [0.99993598, 0.00420935, 0.01042714, 0.00125505],
+  "sao_placement_scale": 5.559917313492239,
+  "frame": [0.99997377, 0.00618069, 0.00378523, 0.00011709],
   "reference": {
-    "bounds_min": [-0.358894, -0.191002, -0.060897],
-    "bounds_max": [0.680613, 0.198444, 0.052936],
-    "neck": {"joint_x": 0.155662, "nut_x": 0.519489, "width_joint": 0.055644, "width_nut": 0.045749, "center_y": 0.003725, "fret_z": 0.047782, "back_z": 0.007108, "heel_x": 0.171255, "top_joint": 0.046976, "top_nut": 0.046435}
+    "bounds_min": [-0.212023, -0.137057, -0.001554],
+    "bounds_max": [0.797844, 0.142389, 0.046828],
+    "neck": {"joint_x": 0.227269, "nut_x": 0.616068, "width_joint": 0.049816, "width_nut": 0.031435, "center_y": -0.000474, "fret_z": 0.036781, "back_z": 0.021745, "heel_x": 0.131332, "top_joint": 0.037155, "top_nut": 0.035334}
   },
   "landmarks": {
-    "NECK_PIVOT": {"position": [4.373398, -2.754097, 6.2819]},
-    "NUT": {"position": [64.4079, -1.828405, 7.2436]},
-    "FRETBOARD_PLANE": {"position": [4.373398, -2.754097, 6.2819], "normal": [0, 0, 1]},
-    "FRETBOARD_EDGE": {"position": [4.373398, -2.754097, 6.2819], "normal": [0, 1, 0]},
-    "NECK_BODY_BARRIER": {"position": [22.0301, 0, 0], "normal": [1, 0, 0]},
-    "STRUM_A": {"position": [-6.749897, 6, 10]},
-    "STRUM_B": {"position": [5, 6, 10]},
-    "STRUM_X_PLANE": {"position": [-6.749897, 6, 10], "normal": [1, 0, 0]},
-    "STRING_PLANE": {"position": [4.373398, -2.754097, 11.2819], "normal": [0, 0, 1]}
+    "NECK_PIVOT": {"position": [0.2818387, -0.05244516, 0.07592965]},
+    "NUT": {"position": [1.208207, -0.03088328, 0.07761878]},
+    "FRETBOARD_PLANE": {"position": [0.2818387, -0.05244516, 0.07592965], "normal": [0, 0, 1]},
+    "FRETBOARD_EDGE": {"position": [0.2818387, -0.05244516, 0.07592965], "normal": [0, 1, 0]},
+    "NECK_BODY_BARRIER": {"position": [0.2818387, 0, 0], "normal": [1, 0, 0]},
+    "STRUM_A": {"position": [-0.1000154, 0.075, 0.16677461]},
+    "STRUM_B": {"position": [0.15, 0.075, 0.16677461]},
+    "STRUM_X_PLANE": {"position": [-0.1000154, 0.075, 0.16677461], "normal": [1, 0, 0]},
+    "STRING_PLANE": {"position": [0.2818387, -0.05244516, 0.15592965], "normal": [0, 0, 1]}
   },
-  "mount": {"sao_bone": "上半身2", "sao_position": [-1.3, -0.2, -1.8], "sao_rotation": [10, 15, 5]},
+  "mount": {"sao_bone": "上半身2", "sao_position": [-1.3, -0.4, -1.8], "sao_rotation": [20, 15, 5]},
   "aim": {"sao_offset": [0.6, -0.25, 0]},
   "wrist": {"sao_offset": [60, 180, 0], "weight": 0.5},
   "magnets": [
@@ -43,7 +43,7 @@
     {
       "sao_index": 2, "preset_id": "STRING_BARRIER", "name": "String Barrier", "hand": "R", "kind": "PLANE",
       "a": "STRING_PLANE", "crossable": false, "effective_distance": 3, "power": -99,
-      "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"], "fingertip_offset": -5, "push_only": true
+      "fingertip_mode": "V2", "fingers": ["INDEX", "MIDDLE", "RING"], "fingertip_offset": -0.08, "push_only": true
     },
     {
       "sao_index": 3, "preset_id": "FRETBOARD_PLANE", "name": "Fretboard Plane", "hand": "L", "kind": "PLANE",
