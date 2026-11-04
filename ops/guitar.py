@@ -10,6 +10,7 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Matrix, Quaternion, Vector
 
+from ..i18n import CONTEXT, msg, report as rpt, tip
 from ..core import autoland, calibrate, guitar_frame, keys, landmarks, mount, presets
 from ..core.magnets import apply_mode
 from .common import report, tag_redraw
@@ -113,7 +114,7 @@ def refit(context, root, preset, create=False):
     """
     meshes = root_meshes(root)
     if not meshes:
-        raise presets.PresetError("GTR_ROOT has no meshes below it: normalise the guitar first.")
+        raise presets.PresetError(msg("GTR_ROOT has no meshes below it: normalise the guitar first."))
     context.view_layer.update()
     geometry = guitar_frame.gather(meshes, context.evaluated_depsgraph_get(), root.matrix_world.inverted())
     measurements = guitar_frame.measure_geometry(geometry)
@@ -122,7 +123,7 @@ def refit(context, root, preset, create=False):
     existing = landmarks.find(root)
     for role, spec in preset.landmarks.items():
         if role not in landmarks.ROLE_BY_ID:
-            fitted.messages.append(('WARNING', f"The preset has an unknown landmark role {role!r}."))
+            fitted.messages.append(('WARNING', msg('The preset has an unknown landmark role {role!r}.', role=role)))
             continue
         if create or role in existing:
             normal = fitted.normal(spec.normal) if spec.normal is not None else None
@@ -151,13 +152,13 @@ def _poll_root(cls, context, moves=False):
     """`moves`: the operator moves GTR_ROOT, which a bake animates."""
     root = context.scene.gtr.guitar_root
     if root is None:
-        cls.poll_message_set("Normalise the guitar first")
+        cls.poll_message_set(tip("Normalise the guitar first"))
         return False
     if context.mode != 'OBJECT':
-        cls.poll_message_set("Switch to Object Mode first")
+        cls.poll_message_set(tip("Switch to Object Mode first"))
         return False
     if moves and keys.has_bake(root):
-        cls.poll_message_set("The bake animates GTR_ROOT: remove the bake first")
+        cls.poll_message_set(tip("The bake animates GTR_ROOT: remove the bake first"))
         return False
     return True
 
@@ -170,23 +171,24 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
 
     bl_idname = "gtr.normalize_frame"
     bl_label = "Normalise Frame"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     real_length: FloatProperty(
         name="Real Length (m)", default=0.0, min=0.0, soft_max=2.0, precision=3,
-        description="Scale GTR_ROOT so that the guitar is this long, in metres; 0 keeps its size")
+        description="Scale GTR_ROOT so that the guitar is this long, in metres; 0 keeps its size", translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
         if context.mode != 'OBJECT':
-            cls.poll_message_set("Switch to Object Mode first")
+            cls.poll_message_set(tip("Switch to Object Mode first"))
             return False
         root = context.scene.gtr.guitar_root
         if not selected_meshes(context) and root is None:
-            cls.poll_message_set("Select the guitar meshes first")
+            cls.poll_message_set(tip("Select the guitar meshes first"))
             return False
         if root is not None and keys.has_bake(root):
-            cls.poll_message_set("The bake animates GTR_ROOT: remove the bake first")
+            cls.poll_message_set(tip("The bake animates GTR_ROOT: remove the bake first"))
             return False
         return True
 
@@ -197,7 +199,7 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
         if root is not None:
             meshes = list(dict.fromkeys(root_meshes(root) + meshes))
         if not meshes:
-            self.report({'ERROR'}, "Select the guitar meshes first.")
+            self.report({'ERROR'}, rpt("Select the guitar meshes first."))
             return {'CANCELLED'}
         try:
             preset = presets.load(root.gtr_guitar.preset if root is not None and root.gtr_guitar.preset
@@ -206,7 +208,7 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
             samples = guitar_frame.sample_surface(geometry)
             detection = guitar_frame.detect(samples, geometry)
         except (guitar_frame.FrameError, presets.PresetError) as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
 
         rotation = Matrix(detection.axes.tolist()).to_quaternion()
@@ -233,15 +235,19 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
         try:
             fitted = refit(context, root, preset)
         except presets.PresetError as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
         _store_detection(root.gtr_guitar, detection, fitted.messages)
         report(self, detection.messages + fitted.messages)
         length = root.gtr_guitar.length_m
-        self.report({'INFO'}, f"Guitar frame found ({detection.confidence.lower()} confidence); the guitar is "
-                              f"{length:.2f} m long. Check the axes, then load a preset.")
+        self.report({'INFO'}, rpt(msg(
+            'Guitar frame found ({value} confidence); the guitar is {length:.2f} m long. Check the axes, then '
+            'load a preset.',
+            value=guitar_frame.CONFIDENCE_TEXT[detection.confidence], length=length)))
         if not 0.4 <= length <= 1.6:
-            self.report({'WARNING'}, f"The guitar is {length:.2f} m long: use Real Length to scale it to real size.")
+            self.report({'WARNING'}, rpt(msg(
+                'The guitar is {length:.2f} m long: use Real Length to scale it to real size.',
+                length=length)))
         tag_redraw(context)
         return {'FINISHED'}
 
@@ -251,12 +257,13 @@ class GTR_OT_flip_frame(bpy.types.Operator):
 
     bl_idname = "gtr.flip_frame"
     bl_label = "Flip Frame"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     axis: EnumProperty(
         name="Axis",
         items=(('X', "Flip X", "Swap the headstock and body ends (half turn about Z)"),
-               ('Z', "Flip Z", "Swap the string face and the back (half turn about X)")))
+               ('Z', "Flip Z", "Swap the string face and the back (half turn about X)")), translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
@@ -269,11 +276,13 @@ class GTR_OT_flip_frame(bpy.types.Operator):
         try:
             fitted = refit(context, root, preset_for(context, root))
         except presets.PresetError as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
         info = root.gtr_guitar
         info.confidence = 'HIGH'
-        info.messages = calibrate.format_messages([('INFO', f"{self.axis} flipped by hand.")] + fitted.messages)
+        info.messages = calibrate.format_messages([('INFO', msg(
+            '{axis} flipped by hand.',
+            axis=self.axis))] + fitted.messages)
         report(self, fitted.messages)
         tag_redraw(context)
         return {'FINISHED'}
@@ -290,7 +299,9 @@ def _remove_unused_landmarks(settings, root, preset):
         role = landmarks.ROLE_BY_ID[role_id]
         if not role.required and role_id not in preset.landmarks and obj not in used:
             bpy.data.objects.remove(obj)
-            messages.append(('INFO', f"Removed the {role.label} landmark: the {preset.name} preset does not use it."))
+            messages.append(('INFO', msg(
+                'Removed the {label} landmark: the {name} preset does not use it.',
+                label=msg(role.label), name=preset.name)))
     return messages
 
 
@@ -301,7 +312,7 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
     messages = list(fitted.messages)
     found = landmarks.find(root)
     for role in landmarks.missing(root):
-        messages.append(('WARNING', f"The preset has no {role.label} landmark: add it by hand."))
+        messages.append(('WARNING', msg('The preset has no {label} landmark: add it by hand.', label=msg(role.label))))
     if magnets:
         messages += presets.store_magnets(settings.magnets, preset.magnets, found, fitted)
         apply_mode(settings, settings.mode)
@@ -312,8 +323,8 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
         settings.mount_q = preset.mount_q
         settings.mount_source = 'PRESET'
         settings.mount_preset = preset.name
-        messages.append(('INFO', "The preset mount is only an estimate: pose the guitar on the character and "
-                                 "use Capture Mount."))
+        messages.append(('INFO', msg("The preset mount is only an estimate: pose the guitar on the character and "
+                                 "use Capture Mount.")))
     if aim_wrist:
         if preset.aim_hand_offset is not None:
             settings.aim_hand_offset = preset.aim_hand_offset
@@ -323,21 +334,26 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
         if preset.wrist_blend is not None:
             settings.wrist_blend = preset.wrist_blend
     if not preset.verified:
-        messages.append(('WARNING', f"The {preset.name} preset is not verified against its source: check it."))
+        messages.append(('WARNING', msg(
+            'The {name} preset is not verified against its source: check it.',
+            name=preset.name)))
     report(op, messages)
     scale = root.gtr_guitar.fit_scale
-    op.report({'INFO'}, f"Loaded {preset.name}: fitted to the {'neck' if fitted.method == 'NECK' else 'bounds'} "
-                        f"(×{scale[0]:.2f} long, ×{scale[1]:.2f} wide, ×{scale[2]:.2f} deep). Check the landmarks.")
+    op.report({'INFO'}, rpt(msg(
+        'Loaded {name}: fitted to the {value} (×{value2:.2f} long, ×{value3:.2f} wide, ×{value4:.2f} deep). Check'
+        ' the landmarks.',
+        name=preset.name, value=msg('neck') if fitted.method == 'NECK' else msg('bounds'), value2=scale[0],
+        value3=scale[1], value4=scale[2])))
     tag_redraw(context)
 
 
 class _LoadPresetOptions:
-    magnets: BoolProperty(name="Magnets", default=True, description="Replace the magnet list with the preset's")
+    magnets: BoolProperty(name="Magnets", default=True, description="Replace the magnet list with the preset's", translation_context=CONTEXT)
     mount: BoolProperty(name="Mount", default=True,
-                        description="Replace the mount with the preset's estimate (off when the mount was captured)")
+                        description="Replace the mount with the preset's estimate (off when the mount was captured)", translation_context=CONTEXT)
     aim_wrist: BoolProperty(name="Aim and Wrist", default=True,
                             description="Use the preset's aim hand offset and wrist rotation (off when the wrist "
-                                        "offset was captured)")
+                                        "offset was captured)", translation_context=CONTEXT)
 
     def _set_defaults(self, context):
         if not self.properties.is_property_set("mount"):
@@ -349,7 +365,7 @@ class _LoadPresetOptions:
         try:
             apply_preset(self, context, presets.load(source), self.magnets, self.mount, self.aim_wrist)
         except presets.PresetError as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -359,6 +375,7 @@ class GTR_OT_load_preset(_LoadPresetOptions, bpy.types.Operator):
 
     bl_idname = "gtr.load_preset"
     bl_label = "Load Preset"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -379,10 +396,11 @@ class GTR_OT_load_preset_file(_LoadPresetOptions, bpy.types.Operator, ImportHelp
 
     bl_idname = "gtr.load_preset_file"
     bl_label = "Load Preset File"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
-    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'}, translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
@@ -398,10 +416,11 @@ class GTR_OT_save_preset(bpy.types.Operator, ExportHelper):
 
     bl_idname = "gtr.save_preset"
     bl_label = "Save Preset"
+    bl_translation_context = CONTEXT
 
     filename_ext = ".json"
-    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
-    name: StringProperty(name="Name", default="My Guitar")
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'}, translation_context=CONTEXT)
+    name: StringProperty(name="Name", default="My Guitar", translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
@@ -412,7 +431,7 @@ class GTR_OT_save_preset(bpy.types.Operator, ExportHelper):
         root = settings.guitar_root
         found = landmarks.find(root)
         if not found:
-            self.report({'ERROR'}, "There are no landmarks to save.")
+            self.report({'ERROR'}, rpt("There are no landmarks to save."))
             return {'CANCELLED'}
         context.view_layer.update()
         geometry = guitar_frame.gather(root_meshes(root), context.evaluated_depsgraph_get(),
@@ -444,9 +463,9 @@ class GTR_OT_save_preset(bpy.types.Operator, ExportHelper):
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(presets.dumps(presets.rounded(data)))
         except OSError as exc:
-            self.report({'ERROR'}, f"Cannot write {path}: {exc.strerror or exc}.")
+            self.report({'ERROR'}, rpt(msg('Cannot write {path}: {value}.', path=path, value=exc.strerror or exc)))
             return {'CANCELLED'}
-        self.report({'INFO'}, f"Saved the preset to {path}.")
+        self.report({'INFO'}, rpt(msg('Saved the preset to {path}.', path=path)))
         return {'FINISHED'}
 
 
@@ -457,9 +476,10 @@ class GTR_OT_select_landmark(bpy.types.Operator):
 
     bl_idname = "gtr.select_landmark"
     bl_label = "Select Landmark"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
-    role: EnumProperty(name="Role", items=ROLE_ITEMS)
+    role: EnumProperty(name="Role", items=ROLE_ITEMS, translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
@@ -467,7 +487,7 @@ class GTR_OT_select_landmark(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, properties):
-        return landmarks.ROLE_BY_ID[properties.role].description
+        return tip(landmarks.ROLE_BY_ID[properties.role].description)
 
     def execute(self, context):
         root = context.scene.gtr.guitar_root
@@ -475,9 +495,9 @@ class GTR_OT_select_landmark(bpy.types.Operator):
         if obj is None:
             position = root.matrix_world.inverted() @ context.scene.cursor.location
             obj = landmarks.place(root, self.role, position)
-            self.report({'INFO'}, f"Added {obj.name} at the 3D cursor.")
+            self.report({'INFO'}, rpt(msg('Added {name} at the 3D cursor.', name=obj.name)))
         if not obj.visible_get():
-            self.report({'WARNING'}, f"{obj.name} is hidden or in an excluded collection.")
+            self.report({'WARNING'}, rpt(msg('{name} is hidden or in an excluded collection.', name=obj.name)))
             return {'FINISHED'}
         for other in context.selected_objects:
             other.select_set(False)
@@ -493,6 +513,7 @@ class GTR_OT_auto_landmarks(bpy.types.Operator):
 
     bl_idname = "gtr.auto_landmarks"
     bl_label = "Auto-Place"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -503,7 +524,7 @@ class GTR_OT_auto_landmarks(bpy.types.Operator):
         root = context.scene.gtr.guitar_root
         meshes = root_meshes(root)
         if not meshes:
-            self.report({'ERROR'}, "GTR_ROOT has no meshes below it: normalise the guitar first.")
+            self.report({'ERROR'}, rpt("GTR_ROOT has no meshes below it: normalise the guitar first."))
             return {'CANCELLED'}
         info = root.gtr_guitar
         try:
@@ -513,19 +534,24 @@ class GTR_OT_auto_landmarks(bpy.types.Operator):
             placement = autoland.place(preset, guitar_frame.measure_geometry(geometry), root_metres(context, root),
                                        info.confidence)
         except (autoland.AutoError, presets.PresetError) as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
         for role, (position, normal) in placement.landmarks.items():
             landmarks.place(root, role, position, normal)
         messages = list(placement.messages)
         for role in landmarks.missing(root):
-            messages.append(('WARNING', f"The {preset.name} preset has no {role.label} landmark: add it by hand."))
+            messages.append(('WARNING', msg(
+                'The {name} preset has no {label} landmark: add it by hand.',
+                name=preset.name, label=msg(role.label))))
         info.landmark_source = 'AUTO'
         info.landmark_confidence = placement.confidence
         info.landmark_messages = calibrate.format_messages(messages)
         report(self, messages)
-        self.report({'INFO'}, f"Auto-placed {len(placement.landmarks)} landmarks with the {preset.name} preset's "
-                              f"conventions ({placement.confidence.lower()} confidence). Check them.")
+        self.report({'INFO'}, rpt(msg(
+            "Auto-placed {landmarks_count} landmarks with the {name} preset's conventions ({value} confidence). "
+            'Check them.',
+            landmarks_count=len(placement.landmarks), name=preset.name,
+            value=guitar_frame.CONFIDENCE_TEXT[placement.confidence])))
         tag_redraw(context)
         return {'FINISHED'}
 

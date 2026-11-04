@@ -46,6 +46,7 @@ import bpy
 import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
+from ..i18n import join, mark, msg
 from . import bake, calibrate, collider, diagnostics, filters, keys, magnets, modes, prep, solver
 from .bonemap import SIDES
 
@@ -102,11 +103,12 @@ def chain_messages(rig, paths):
             names = [con.name for con in pbone.constraints
                      if con.name not in ours and not con.mute and con.influence > 0.0]
             if names:
-                messages.append(('WARNING', f"{name} has constraints ({', '.join(names)}) that act on top of the "
-                                            "baked keys: the baked arm will differ from the solve. Mute them, or "
-                                            "bake the rig's FK controls."))
+                messages.append(('WARNING', msg(
+                    '{name} has constraints ({value}) that act on top of the baked keys: the baked arm will '
+                    "differ from the solve. Mute them, or bake the rig's FK controls.",
+                    name=name, value=', '.join(names))))
             if _driven(obj, pbone.path_from_id()):
-                messages.append(('WARNING', f"Drivers on {name} override its baked keys."))
+                messages.append(('WARNING', msg('Drivers on {name} override its baked keys.', name=name)))
     return messages
 
 
@@ -117,13 +119,13 @@ def root_messages(root):
               or any(abs(a - b) > 1e-9 for a, b in zip(root.delta_rotation_quaternion, (1.0, 0.0, 0.0, 0.0)))
               or any(abs(v - 1.0) > 1e-9 for v in root.delta_scale))
     if deltas:
-        raise BakeError("GTR_ROOT has delta transforms: clear them (Object properties > Transform > Delta "
-                        "Transform) before baking.")
+        raise BakeError(msg("GTR_ROOT has delta transforms: clear them (Object properties > Transform > Delta "
+                        "Transform) before baking."))
     messages = []
     if any(not con.mute and con.influence > 0.0 for con in root.constraints):
-        messages.append(('WARNING', "GTR_ROOT has constraints, which act on top of its baked keys."))
+        messages.append(('WARNING', msg("GTR_ROOT has constraints, which act on top of its baked keys.")))
     if _driven(root, ""):
-        messages.append(('WARNING', "Drivers on GTR_ROOT override its baked keys."))
+        messages.append(('WARNING', msg("Drivers on GTR_ROOT override its baked keys.")))
     return messages
 
 
@@ -280,7 +282,7 @@ def _check_tweak(owners):
     for owner in owners:
         data = owner.animation_data if owner is not None else None
         if data is not None and data.use_tweak_mode:
-            raise BakeError(f"{owner.name} is in NLA tweak mode: leave it in the NLA editor first.")
+            raise BakeError(msg('{name} is in NLA tweak mode: leave it in the NLA editor first.', name=owner.name))
 
 
 def _parent_names(obj, paths):
@@ -294,7 +296,7 @@ def _parent_names(obj, paths):
 
 def _fmt_frames(frames, limit=8):
     text = ", ".join(str(f) for f in frames[:limit])
-    return text + (f" and {len(frames) - limit} more" if len(frames) > limit else "")
+    return msg("{frames} and {count} more", frames=text, count=len(frames) - limit) if len(frames) > limit else text
 
 
 # Bake ----------------------------------------------------------------------------------------------------------
@@ -337,7 +339,7 @@ class BakeJob(Job):
         self.rig = rig
         self.start, self.end = frame_range(scene)
         if self.end < self.start:
-            raise BakeError("The frame range is empty.")
+            raise BakeError(msg("The frame range is empty."))
         _check_tweak((obj, settings.guitar_root))
         settings.solve_active = False
         rig.set_active(False)
@@ -348,8 +350,8 @@ class BakeJob(Job):
         self.messages += chain_messages(rig, self.paths)
         self.prep_serial = keys.prep_serial(obj, playing=True)
         if keys.has_prep(obj) and not self.prep_serial:
-            self.messages.append(('WARNING', "The GuitarPrep layer is muted (Show Original): the bake read the mocap "
-                                             "without the prep."))
+            self.messages.append(('WARNING', msg("The GuitarPrep layer is muted (Show Original): the bake read the mocap "
+                                             "without the prep.")))
         self.chest = obj.gtr_char.bone_map.chest
         solved = [name for side in SIDES for name in self.paths[side]]
         self.frames = list(range(self.start, self.end + 1))
@@ -524,37 +526,48 @@ class BakeJob(Job):
 
     def _report(self, keyed, error, error_frame, elapsed):
         stats, count = self.stats, len(self.frames)
-        lines = [('INFO', f"Baked frames {self.start}-{self.end} ({count} frames) in {elapsed:.1f} s "
-                          f"({count / elapsed:.1f} frames/s): {keyed} arm bones and the guitar.")]
+        lines = [('INFO', msg(
+            'Baked frames {start}-{end} ({count} frames) in {elapsed:.1f} s ({value:.1f} frames/s): {keyed} arm '
+            'bones and the guitar.',
+            start=self.start, end=self.end, count=count, elapsed=elapsed, value=count / elapsed, keyed=keyed))]
         parts = []
         if stats.largest_frame is not None:
-            parts.append(f"the largest wrist correction was {stats.largest * 100.0:.1f} cm (frame "
-                         f"{stats.largest_frame})")
-        for number, text in ((stats.collider, "the chest collider"), (stats.clamped, "the reach clamp"),
-                             (stats.aim_limited, "the Max Swing limit")):
+            parts.append(msg(
+                'The largest wrist correction was {value:.1f} cm (frame {largest_frame})',
+                value=stats.largest * 100.0, largest_frame=stats.largest_frame))
+        for number, text in ((stats.collider, mark('the chest collider')), (stats.clamped, mark('the reach clamp')),
+                             (stats.aim_limited, mark('the Max Swing limit'))):
             if number:
-                parts.append(f"{text} acted on {number} frames")
+                parts.append(msg('{text} acted on {number} frames', text=msg(text), number=number))
         if parts:
-            lines.append(('INFO', "; ".join(parts).capitalize() + "."))
+            lines.append(('INFO', join(parts, "; ") + "."))
         runs = self.setup.schedule.runs(self.start, self.end)
         if len(runs) > 1 or runs[0][2].override != modes.SCENE:
-            text = ", ".join(f"{first}-{last} {mode.mode.title()}" + ("" if mode.override == modes.SCENE else "*")
+            text = join(msg(
+                '{first}-{last} {value}',
+                first=first, last=last, value=msg(mode.mode.title())) + ("" if mode.override == modes.SCENE else "*")
                              for first, last, mode in runs)
-            lines.append(('INFO', f"Modes: {text} (* range override). The filters restarted at the {len(runs) - 1} "
-                                  f"changes, where the neck aim fades over {modes.FADE_FRAMES} frames."))
+            lines.append(('INFO', msg(
+                'Modes: {text} (* range override). The filters restarted at the {value} changes, where the neck '
+                'aim fades over {FADE_FRAMES} frames.',
+                text=text, value=len(runs) - 1, FADE_FRAMES=modes.FADE_FRAMES)))
         if stats.unconverged:
-            lines.append(('INFO', f"The neck aim did not settle on {len(stats.unconverged)} frames "
-                                  f"({_fmt_frames(stats.unconverged)}): raise Iterations or lower Relax."))
+            lines.append(('INFO', msg(
+                'The neck aim did not settle on {unconverged_count} frames ({value}): raise Iterations or lower '
+                'Relax.',
+                unconverged_count=len(stats.unconverged), value=_fmt_frames(stats.unconverged))))
         if stats.misses:
-            lines.append(('WARNING', f"The IK missed its target on {len(stats.misses)} frames "
-                                     f"({_fmt_frames(stats.misses)}): check the arm bones for IK locks, limits or "
-                                     "stretch."))
+            lines.append(('WARNING', msg(
+                'The IK missed its target on {misses_count} frames ({value}): check the arm bones for IK locks, '
+                'limits or stretch.',
+                misses_count=len(stats.misses), value=_fmt_frames(stats.misses))))
         if error > VERIFY_TOLERANCE_M:
-            lines.append(('WARNING', f"Played back, the bake is {error * 1000.0:.1f} mm from the solve at frame "
-                                     f"{error_frame}: something acts on top of the keys (constraints, drivers, "
-                                     "other NLA tracks above the bake)."))
+            lines.append(('WARNING', msg(
+                'Played back, the bake is {value:.1f} mm from the solve at frame {error_frame}: something acts on'
+                ' top of the keys (constraints, drivers, other NLA tracks above the bake).',
+                value=error * 1000.0, error_frame=error_frame)))
         else:
-            lines.append(('INFO', f"Played back within {error * 1000.0:.2f} mm of the solve."))
+            lines.append(('INFO', msg('Played back within {value:.2f} mm of the solve.', value=error * 1000.0)))
         return lines
 
 
@@ -663,7 +676,7 @@ class SmoothJob(Job):
             if found is not None:
                 self.found[role] = (owner, found[1].action)
         if not self.found:
-            raise BakeError("There is no bake to smooth.")
+            raise BakeError(msg("There is no bake to smooth."))
         self.frames, self.basis, self.temp = [], {}, None
         if settings.smooth_mode == 'CORRECTION' and keys.ARM in self.found:
             obj, action = self.found[keys.ARM]
@@ -726,12 +739,18 @@ class SmoothJob(Job):
             correction = role == keys.ARM and settings.smooth_mode == 'CORRECTION'
             smoothed, skipped = smooth_action(action, owner, cutoff, fps, self._reference if correction else None)
             name = "arm" if role == keys.ARM else "guitar"
-            text = (f"Smoothed the solve's correction on {smoothed} {name} curves at {cutoff:g} Hz" if correction
-                    else f"Smoothed {smoothed} {name} curves at {cutoff:g} Hz")
+            text = (msg(
+                "Smoothed the solve's correction on {smoothed} {name} curves at {cutoff:g} Hz",
+                smoothed=smoothed, name=msg(name), cutoff=cutoff) if correction
+                    else msg(
+                        'Smoothed {smoothed} {name} curves at {cutoff:g} Hz',
+                        smoothed=smoothed, name=msg(name), cutoff=cutoff))
             if not filters.can_filter(cutoff, fps):
-                text = f"The {name} cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed"
+                text = msg(
+                    'The {name} cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed',
+                    name=msg(name), cutoff=cutoff, fps=fps)
             if skipped:
-                text += f"; skipped {skipped} whose keys are not one per frame"
+                text += msg('. Skipped curves whose keys are not one per frame: {skipped}', skipped=skipped)
             lines.append(text + ".")
         if self.temp is not None:
             self.temp.restore()
@@ -739,9 +758,9 @@ class SmoothJob(Job):
             scene.frame_set(scene.frame_current, subframe=scene.frame_subframe)
         messages = [('INFO', text) for text in lines]
         if keys.ARM in self.found and settings.smooth_mode == 'KEYS' and keys.has_prep(self.found[keys.ARM][0]):
-            messages.append(('WARNING', "Smoothing the arm keys also smooths away the prep's quick motion: use Smooth "
-                                        "Correction to keep it."))
-        messages.append(('INFO', "Re-clamp restores the contacts that smoothing loosened."))
+            messages.append(('WARNING', msg("Smoothing the arm keys also smooths away the prep's quick motion: use Smooth "
+                                        "Correction to keep it.")))
+        messages.append(('INFO', msg("Re-clamp restores the contacts that smoothing loosened.")))
         settings.bake_report = calibrate.format_messages(messages)
         return messages
 
@@ -777,7 +796,7 @@ class ReclampJob(Job):
         self.rig = rig
         found = keys.bake_strips(obj).get(keys.ARM)
         if found is None:
-            raise BakeError("Bake first: the character has no GuitarBake strip.")
+            raise BakeError(msg("Bake first: the character has no GuitarBake strip."))
         _check_tweak((obj,))
         strip = found[1]
         self.action, self.slot = strip.action, getattr(strip, "action_slot", None)
@@ -917,13 +936,16 @@ class ReclampJob(Job):
         counts = {side: len(self.solved[side]) for side in SIDES}
         frames = sorted({i for side in SIDES for i in self.solved[side]})
         if not frames:
-            text = (f"No frame of {self.frames[0]}-{self.frames[-1]} needed a re-clamp (tolerance "
-                    f"{self.tolerance * metres * 1000.0:.1f} mm).") if self.frames else "No frames to re-clamp."
+            text = (msg(
+                'No frame of {value}-{value2} needed a re-clamp (tolerance {value3:.1f} mm).',
+                value=self.frames[0], value2=self.frames[-1], value3=self.tolerance * metres * 1000.0)) if self.frames else mark('No frames to re-clamp.')
             return [('INFO', text)]
         deepest, side, index = max((push, side, i) for side in SIDES for i, push in self.pushes[side].items())
-        return [('INFO', f"Re-clamped {len(frames)} frames: the left hand on {counts['L']}, the right hand on "
-                         f"{counts['R']}. The deepest was {deepest * metres * 1000.0:.1f} mm "
-                         f"({solver.SIDE_NAMES[side]} hand, frame {self.frames[index]}).")]
+        return [('INFO', msg(
+            'Re-clamped {frames_count} frames: the left hand on {value}, the right hand on {value2}. The deepest '
+            'was {value3:.1f} mm ({value4} hand, frame {value5}).',
+            frames_count=len(frames), value=counts['L'], value2=counts['R'], value3=deepest * metres * 1000.0,
+            value4=solver.SIDE_NAMES[side], value5=self.frames[index]))]
 
 
 # Remove --------------------------------------------------------------------------------------------------------
@@ -946,8 +968,10 @@ def remove_bake(context):
             kept.append(action.name)
     diagnostics.remove(settings)
     scene.frame_set(scene.frame_current, subframe=scene.frame_subframe)
-    messages = [('INFO', f"Removed the bake ({removed} actions).")]
+    messages = [('INFO', msg('Removed the bake. Actions removed: {count}.', count=removed))]
     if kept:
-        messages.append(('INFO', f"Kept the refine actions with your keys ({', '.join(kept)}) with a fake user."))
+        messages.append(('INFO', msg(
+            'Kept the refine actions with your keys ({value}) with a fake user.',
+            value=', '.join(kept))))
     settings.bake_report = calibrate.format_messages(messages)
     return messages

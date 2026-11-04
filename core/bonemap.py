@@ -12,6 +12,8 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from ..i18n import join, mark, msg
+
 SIDES = ('L', 'R')
 FINGERS = ('index', 'middle', 'ring')
 PHALANGES = ('proximal', 'intermediate', 'distal')
@@ -43,7 +45,8 @@ class Slot:
     def title(self):
         side = {'L': "Left ", 'R': "Right "}.get(self.side, "")
         chain = "IK " if self.group == 'CHAIN' else ""
-        return f"{side}{chain}{self.label}"
+        # The catalog tool collects the complete titles from SLOTS.
+        return msg(f"{side}{chain}{self.label}")
 
 
 def _make_slots():
@@ -95,6 +98,13 @@ def mapping_from(bone_map):
 def load_presets():
     with open(PRESET_PATH, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def source_message(source):
+    """Translate known convention labels without changing the stored mapping provenance."""
+    labels = {convention["label"] for convention in load_presets()["conventions"]}
+    labels.update((mark("VRM humanoid"), mark("generic names"), mark("no match")))
+    return join(msg(part) if part in labels else part for part in source.split(", "))
 
 
 def normalize(name):
@@ -246,8 +256,10 @@ def guess(arm_obj):
 
     messages = []
     if mapping["chest"] and rank.get("chest", 0) > 0:
-        messages.append(('WARNING', f"No humanoid chest bone found: the guitar will mount on '{mapping['chest']}'. "
-                                    "Check Chest (Mount), and capture the mount again if you change it."))
+        messages.append(('WARNING', msg(
+            "No humanoid chest bone found: the guitar will mount on '{value}'. Check Chest (Mount), and capture "
+            'the mount again if you change it.',
+            value=mapping['chest'])))
     messages += validate(bones, mapping)
     return Guess(mapping, ", ".join(sources) or "no match", messages)
 
@@ -288,9 +300,9 @@ def validate(bones, mapping):
         name = mapping.get(slot.key, "")
         if not name:
             if slot.required:
-                messages.append(('ERROR', f"{slot.title} is not mapped."))
+                messages.append(('ERROR', msg('{title} is not mapped.', title=slot.title)))
         elif bones.get(name) is None:
-            messages.append(('ERROR', f"{slot.title}: there is no bone '{name}'."))
+            messages.append(('ERROR', msg("{title}: there is no bone '{name}'.", title=slot.title, name=name)))
 
     for side in SIDES:
         pairs = [("upper_arm", "forearm"), ("forearm", "hand")]
@@ -300,22 +312,29 @@ def validate(bones, mapping):
             a, b = get(f"{upper}_{side}"), get(f"{lower}_{side}")
             if a is not None and b is not None and not is_ancestor(a, b):
                 title = SLOT_BY_KEY[f"{lower}_{side}"].title
-                messages.append(('WARNING', f"{title} '{b.name}' is not a child of '{a.name}'."))
-        side_name = "Left" if side == 'L' else "Right"
+                messages.append(('WARNING', msg(
+                    "{title} '{name}' is not a child of '{name2}'.",
+                    title=title, name=b.name, name2=a.name)))
+        side_name = msg("Left") if side == 'L' else msg("Right")
         upper, lower = get(f"chain_upper_arm_{side}"), get(f"chain_forearm_{side}")
         if upper is not None and lower is not None and chain_count(bones, upper.name, lower.name) == 0:
-            messages.append(('ERROR', f"{side_name} IK chain: '{lower.name}' is not below '{upper.name}'."))
+            messages.append(('ERROR', msg(
+                "{side_name} IK chain: '{name}' is not below '{name2}'.",
+                side_name=side_name, name=lower.name, name2=upper.name)))
         forearm, hand = get(f"chain_forearm_{side}"), get(f"chain_hand_{side}")
         if forearm is not None and hand is not None and not is_ancestor(forearm, hand):
-            messages.append(('WARNING', f"{side_name} IK hand '{hand.name}' is not below the IK forearm "
-                                        f"'{forearm.name}'."))
+            messages.append(('WARNING', msg(
+                "{side_name} IK hand '{name}' is not below the IK forearm '{name2}'.",
+                side_name=side_name, name=hand.name, name2=forearm.name)))
 
     flagged = set()
     for slot in SLOTS:
         if slot.side == 'L':
             name = mapping.get(slot.key, "")
             if name and name == mapping.get(slot.key[:-1] + 'R', ""):
-                messages.append(('ERROR', f"'{name}' is mapped to both sides ({slot.title} and its right twin)."))
+                messages.append(('ERROR', msg(
+                    "'{name}' is mapped to both sides ({title} and its right twin).",
+                    name=name, title=slot.title)))
                 flagged.add(name)
     used = {}
     for slot in SLOTS:
@@ -323,7 +342,9 @@ def validate(bones, mapping):
         if not name or slot.group == 'CHAIN' or name in flagged:
             continue
         if name in used:
-            messages.append(('WARNING', f"'{name}' is used for both {used[name]} and {slot.title}."))
+            messages.append(('WARNING', msg(
+                "'{name}' is used for both {value} and {title}.",
+                name=name, value=used[name], title=slot.title)))
         else:
             used[name] = slot.title
     return messages

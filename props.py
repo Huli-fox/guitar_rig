@@ -16,6 +16,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
                        IntProperty, PointerProperty, StringProperty)
 from bpy.types import PropertyGroup
 
+from .i18n import CONTEXT
 from .core import bonemap, calibrate, diagnostics, filters, magnets, presets
 
 SIDE_ITEMS = (
@@ -68,77 +69,77 @@ class GTR_Magnet(PropertyGroup):
     """A line or plane in guitar space that pulls one wrist target (§3.6, §5.5). `name` is the display name.
     Edits redraw the viewport, whose overlay shows the magnets."""
 
-    enabled: BoolProperty(name="Enabled", default=True, update=_redraw)
+    enabled: BoolProperty(name="Enabled", default=True, update=_redraw, translation_context=CONTEXT)
     preset_id: StringProperty(
         name="Preset ID",
-        description="Role of the magnet in a preset (e.g. FRETBOARD_PLANE); mode switches find magnets by it")
-    hand: EnumProperty(name="Hand", items=SIDE_ITEMS, default='L', update=_redraw)
+        description="Role of the magnet in a preset (e.g. FRETBOARD_PLANE); mode switches find magnets by it", translation_context=CONTEXT)
+    hand: EnumProperty(name="Hand", items=SIDE_ITEMS, default='L', update=_redraw, translation_context=CONTEXT)
     kind: EnumProperty(
         name="Kind", default='PLANE', update=_redraw,
         items=(('LINE', "Line", "Pull toward the segment from landmark A to landmark B"),
                ('PLANE', "Plane", "Pull toward, or clamp against, the plane through landmark A "
-                                  "(normal: A's local Z)")))
-    landmark_a: PointerProperty(name="Landmark A", type=bpy.types.Object, poll=_is_empty, update=_redraw)
+                                  "(normal: A's local Z)")), translation_context=CONTEXT)
+    landmark_a: PointerProperty(name="Landmark A", type=bpy.types.Object, poll=_is_empty, update=_redraw, translation_context=CONTEXT)
     landmark_b: PointerProperty(name="Landmark B", type=bpy.types.Object, poll=_is_empty, update=_redraw,
-                                description="End of the segment (line magnets only)")
+                                description="End of the segment (line magnets only)", translation_context=CONTEXT)
     crossable: BoolProperty(
         name="Crossable", default=True, update=_redraw,
-        description="Off: the plane is a barrier, and a hand behind it is clamped onto it with full weight")
+        description="Off: the plane is a barrier, and a hand behind it is clamped onto it with full weight", translation_context=CONTEXT)
     effective_distance_m: FloatProperty(
         name="Distance (m)", default=0.27, min=0.0, soft_max=1.0, precision=4, update=_redraw,
-        description="Reach of the magnet in metres, before arm-ratio scaling. Barriers need it too")
+        description="Reach of the magnet in metres, before arm-ratio scaling. Barriers need it too", translation_context=CONTEXT)
     peak: FloatProperty(name="Peak (m)", default=0.0, min=0.0, precision=4, update=_redraw,
-                        description="Distance from the feature at which the weight is highest")
+                        description="Distance from the feature at which the weight is highest", translation_context=CONTEXT)
     power: FloatProperty(
         name="Power", default=0.0, soft_min=-99.0, soft_max=1.0, update=_redraw,
         description="0: linear falloff over the distance; 1: full snap within it; -9 or less: barrier "
-                    "clamp only")
+                    "clamp only", translation_context=CONTEXT)
     use_default_rotation: BoolProperty(
         name="Use Default Rotation", default=False, update=_redraw,
-        description="Place the feature with the guitar's chest-mount rotation, before the neck aim")
+        description="Place the feature with the guitar's chest-mount rotation, before the neck aim", translation_context=CONTEXT)
     hand_offset_mode: EnumProperty(
         name="Hand Offset", default='NONE', update=_redraw,
         items=(('PARENT_BONE', "Aim Offset", "The aim hand offset (SAO's \"parent_bone\" offset)"),
                ('CUSTOM', "Custom", "The offset vector below"),
-               ('NONE', "None", "The wrist itself")))
+               ('NONE', "None", "The wrist itself")), translation_context=CONTEXT)
     hand_offset: FloatVectorProperty(
         name="Offset (m)", size=3, precision=4, update=_redraw,
-        description="Offset from the wrist in the rest-aligned hand frame, in metres")
+        description="Offset from the wrist in the rest-aligned hand frame, in metres", translation_context=CONTEXT)
     apply_axis_rot: BoolProperty(
         name="Apply Axis Rotation", default=True, update=_redraw,
         description="Rotate the offset by axis_rot, as SAO does for avatars whose rest pose is not a T-pose; "
-                    "axis_rot is the identity on T-pose rigs")
+                    "axis_rot is the identity on T-pose rigs", translation_context=CONTEXT)
     fingertip_mode: EnumProperty(
         name="Fingertips", default='NONE', update=_redraw,
         items=(('NONE', "None", "The hand point itself meets the plane"),
-               ('V2', "Fingertip v2", "Shift the hand so that the nearest fingertip lands on the plane")))
+               ('V2', "Fingertip v2", "Shift the hand so that the nearest fingertip lands on the plane")), translation_context=CONTEXT)
     fingers: EnumProperty(name="Fingers", items=FINGER_ITEMS, options={'ENUM_FLAG'},
-                          default={'INDEX', 'MIDDLE', 'RING'}, update=_redraw)
+                          default={'INDEX', 'MIDDLE', 'RING'}, update=_redraw, translation_context=CONTEXT)
     fingertip_offset_m: FloatProperty(
         name="Fingertip Offset", default=0.0, precision=4, update=_redraw,
         description="SAO's reference_point_offset_distance: shifts the plane along its normal for the fingertips. "
-                    "In GTR_ROOT units, so it scales with the guitar (metres for a real-size guitar at scale 1)")
+                    "In GTR_ROOT units, so it scales with the guitar (metres for a real-size guitar at scale 1)", translation_context=CONTEXT)
     push_only: BoolProperty(
         name="Push Only", default=False, update=_redraw,
-        description="The fingertips may push the hand away from the plane but never pull it in")
+        description="The fingertips may push the hand away from the plane but never pull it in", translation_context=CONTEXT)
     filter: EnumProperty(
         name="Filter", default='NONE', update=_redraw,
         items=(('NONE', "None", ""),
                ('ONE_EURO', "One Euro", "One-euro filter on the pull"),
-               ('ROTATION_BASED', "Rotation", "Filter the angle about the guitar root")))
+               ('ROTATION_BASED', "Rotation", "Filter the angle about the guitar root")), translation_context=CONTEXT)
     hysteresis: FloatProperty(
         name="Hysteresis", default=1.15, min=1.0, soft_max=2.0, update=_redraw,
-        description="Distance multiplier while a snap magnet (power 1 or more) holds the hand")
+        description="Distance multiplier while a snap magnet (power 1 or more) holds the hand", translation_context=CONTEXT)
 
 
 class GTR_RangeOverride(PropertyGroup):
     """A frame range solved in another mode (§5.8, core/modes.py)."""
 
-    enabled: BoolProperty(name="Enabled", default=True)
-    frame_start: IntProperty(name="Start", default=1, description="First frame of the range")
-    frame_end: IntProperty(name="End", default=250, description="Last frame of the range")
+    enabled: BoolProperty(name="Enabled", default=True, translation_context=CONTEXT)
+    frame_start: IntProperty(name="Start", default=1, description="First frame of the range", translation_context=CONTEXT)
+    frame_end: IntProperty(name="End", default=250, description="Last frame of the range", translation_context=CONTEXT)
     mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='ALIGN',
-                       description="The mode's switch applies to these frames on top of the scene's settings")
+                       description="The mode's switch applies to these frames on top of the scene's settings", translation_context=CONTEXT)
 
 
 def _bone_map_changed(self, context):
@@ -164,17 +165,17 @@ _SLOT_HELP = {
 
 def _bone_map_annotations():
     annotations = {
-        "source": StringProperty(name="Source", description="Naming conventions the last auto-map matched"),
+        "source": StringProperty(name="Source", description="Naming conventions the last auto-map matched", translation_context=CONTEXT),
     }
     for slot in bonemap.SLOTS:
         text = _SLOT_HELP.get(slot.kind, f"{slot.title} bone")
         annotations[slot.key] = StringProperty(
             name=slot.title, update=_bone_map_changed,
-            description=text if slot.required else f"{text} (optional)")
+            description=text if slot.required else f"{text} (optional)", translation_context=CONTEXT)
     for side in bonemap.SIDES:
         annotations[f"chain_count_{side}"] = IntProperty(
             name="Chain Count", min=0,
-            description="IK chain length from the IK forearm up to the IK upper arm (0: not a valid chain)")
+            description="IK chain length from the IK forearm up to the IK upper arm (0: not a valid chain)", translation_context=CONTEXT)
     return annotations
 
 
@@ -204,15 +205,15 @@ def _recalibrate(self, context):
 
 
 class GTR_Fingertip(PropertyGroup):
-    side: EnumProperty(name="Side", items=SIDE_ITEMS)
-    finger: EnumProperty(name="Finger", items=FINGER_ITEMS)
-    bone: StringProperty(name="Distal Bone")
+    side: EnumProperty(name="Side", items=SIDE_ITEMS, translation_context=CONTEXT)
+    finger: EnumProperty(name="Finger", items=FINGER_ITEMS, translation_context=CONTEXT)
+    bone: StringProperty(name="Distal Bone", translation_context=CONTEXT)
     tip_local: FloatVectorProperty(name="Tip", size=3, precision=5,
-                                   description="Fingertip in the distal bone's rest space (armature units)")
+                                   description="Fingertip in the distal bone's rest space (armature units)", translation_context=CONTEXT)
     source: EnumProperty(
         name="Source",
         items=(('TAIL', "Bone Tail", "The distal bone's tail"),
-               ('ESTIMATE', "Estimated", "Distal head plus half the intermediate segment, as SAO does")))
+               ('ESTIMATE', "Estimated", "Distal head plus half the intermediate segment, as SAO does")), translation_context=CONTEXT)
 
 
 class GTR_Calibration(PropertyGroup):
@@ -220,38 +221,38 @@ class GTR_Calibration(PropertyGroup):
 
     flip_facing: BoolProperty(
         name="Flip Facing", update=_recalibrate,
-        description="Turn the character frame half a turn about the up axis, if the detected facing is wrong")
+        description="Turn the character frame half a turn about the up axis, if the detected facing is wrong", translation_context=CONTEXT)
     axis_rot_ref_angle: FloatProperty(
         name="Arm Reference Angle", subtype='ANGLE', default=0.0,
         min=math.radians(-80.0), max=math.radians(80.0), update=_recalibrate,
         description="Arm angle below horizontal of the avatar SAO's hand offsets were authored for: 0° for "
                     "the T-pose VRM avatars the guitar scenes target, 37.42° for XR Animator's MMD skeleton. "
-                    "axis_rot turns this direction onto the rig's rest forearm")
-    is_valid: BoolProperty(name="Calibrated")
-    fingerprint: StringProperty()
+                    "axis_rot turns this direction onto the rig's rest forearm", translation_context=CONTEXT)
+    is_valid: BoolProperty(name="Calibrated", translation_context=CONTEXT)
+    fingerprint: StringProperty(translation_context=CONTEXT)
     char_frame: FloatVectorProperty(name="Character Frame", size=4, subtype='QUATERNION',
-                                    default=(1.0, 0.0, 0.0, 0.0))
-    metres_per_bu: FloatProperty(name="Metres per Unit", default=1.0)
-    height: FloatProperty(name="Height (m)")
-    arm_len: FloatProperty(name="Arm Length (m)")
-    palm_len: FloatProperty(name="Palm Length (m)")
-    spine_len: FloatProperty(name="Spine Length (m)")
-    chain_len_L: FloatProperty(name="Left Chain Length (m)")
-    chain_len_R: FloatProperty(name="Right Chain Length (m)")
-    ratio_arm: FloatProperty(name="Arm Ratio", default=1.0)
-    ratio_palm: FloatProperty(name="Palm Ratio", default=1.0)
-    ratio_spine: FloatProperty(name="Spine Ratio", default=1.0)
+                                    default=(1.0, 0.0, 0.0, 0.0), translation_context=CONTEXT)
+    metres_per_bu: FloatProperty(name="Metres per Unit", default=1.0, translation_context=CONTEXT)
+    height: FloatProperty(name="Height (m)", translation_context=CONTEXT)
+    arm_len: FloatProperty(name="Arm Length (m)", translation_context=CONTEXT)
+    palm_len: FloatProperty(name="Palm Length (m)", translation_context=CONTEXT)
+    spine_len: FloatProperty(name="Spine Length (m)", translation_context=CONTEXT)
+    chain_len_L: FloatProperty(name="Left Chain Length (m)", translation_context=CONTEXT)
+    chain_len_R: FloatProperty(name="Right Chain Length (m)", translation_context=CONTEXT)
+    ratio_arm: FloatProperty(name="Arm Ratio", default=1.0, translation_context=CONTEXT)
+    ratio_palm: FloatProperty(name="Palm Ratio", default=1.0, translation_context=CONTEXT)
+    ratio_spine: FloatProperty(name="Spine Ratio", default=1.0, translation_context=CONTEXT)
     axis_rot_L: FloatVectorProperty(name="Left Axis Rotation", size=4, subtype='QUATERNION',
-                                    default=(1.0, 0.0, 0.0, 0.0))
+                                    default=(1.0, 0.0, 0.0, 0.0), translation_context=CONTEXT)
     axis_rot_R: FloatVectorProperty(name="Right Axis Rotation", size=4, subtype='QUATERNION',
-                                    default=(1.0, 0.0, 0.0, 0.0))
-    fingertips: CollectionProperty(type=GTR_Fingertip)
-    messages: StringProperty()
+                                    default=(1.0, 0.0, 0.0, 0.0), translation_context=CONTEXT)
+    fingertips: CollectionProperty(type=GTR_Fingertip, translation_context=CONTEXT)
+    messages: StringProperty(translation_context=CONTEXT)
 
 
 class GTR_Character(PropertyGroup):
-    bone_map: PointerProperty(type=GTR_BoneMap)
-    calibration: PointerProperty(type=GTR_Calibration)
+    bone_map: PointerProperty(type=GTR_BoneMap, translation_context=CONTEXT)
+    calibration: PointerProperty(type=GTR_Calibration, translation_context=CONTEXT)
 
 
 LANDMARK_CONFIDENCE_ITEMS = (
@@ -264,30 +265,30 @@ LANDMARK_CONFIDENCE_ITEMS = (
 class GTR_Guitar(PropertyGroup):
     """The guitar frame found by gtr.normalize_frame and the preset fit, stored on GTR_ROOT."""
 
-    is_root: BoolProperty(name="Guitar Root")
+    is_root: BoolProperty(name="Guitar Root", translation_context=CONTEXT)
     confidence: EnumProperty(
         name="Confidence", default='LOW',
         items=(('HIGH', "High", "All cues agree on the frame"),
                ('MEDIUM', "Medium", "One cue decided, or one of three disagreed"),
-               ('LOW', "Low", "The cues disagree or are missing: check the axes")))
-    messages: StringProperty()
+               ('LOW', "Low", "The cues disagree or are missing: check the axes")), translation_context=CONTEXT)
+    messages: StringProperty(translation_context=CONTEXT)
     landmark_source: EnumProperty(
         name="Landmarks", default='NONE',
         items=(('NONE', "Not Placed", "No landmarks were placed by the add-on"),
                ('PRESET', "Preset Fit", "Placed by the preset fitted to the guitar's bounds and neck"),
-               ('AUTO', "Auto-Placed", "Placed on the neck, heel and body found on the mesh")))
-    landmark_confidence: EnumProperty(name="Landmark Confidence", items=LANDMARK_CONFIDENCE_ITEMS, default='LOW')
-    landmark_messages: StringProperty()
-    length_m: FloatProperty(name="Length (m)")
-    neck_found: BoolProperty(name="Neck Found")
-    preset: StringProperty(name="Preset", description="Id or file of the preset the landmarks were fitted from")
+               ('AUTO', "Auto-Placed", "Placed on the neck, heel and body found on the mesh")), translation_context=CONTEXT)
+    landmark_confidence: EnumProperty(name="Landmark Confidence", items=LANDMARK_CONFIDENCE_ITEMS, default='LOW', translation_context=CONTEXT)
+    landmark_messages: StringProperty(translation_context=CONTEXT)
+    length_m: FloatProperty(name="Length (m)", translation_context=CONTEXT)
+    neck_found: BoolProperty(name="Neck Found", translation_context=CONTEXT)
+    preset: StringProperty(name="Preset", description="Id or file of the preset the landmarks were fitted from", translation_context=CONTEXT)
     fit_method: EnumProperty(
         name="Fit", default='BOUNDS',
         items=(('NECK', "Neck", "Fitted to the neck: length, width and thickness"),
-               ('BOUNDS', "Bounds", "Fitted to the bounding box")))
+               ('BOUNDS', "Bounds", "Fitted to the bounding box")), translation_context=CONTEXT)
     fit_scale: FloatVectorProperty(name="Fit Scale", size=3, default=(1.0, 1.0, 1.0),
                                    description="Size of the guitar relative to the preset's reference, along X "
-                                               "(neck length), Y (neck width) and Z (neck thickness)")
+                                               "(neck length), Y (neck width) and Z (neck thickness)", translation_context=CONTEXT)
 
 
 class GTR_Prep(PropertyGroup):
@@ -296,64 +297,64 @@ class GTR_Prep(PropertyGroup):
 
     intensity: FloatProperty(
         name="Intensity", default=1.0, min=0.0, soft_max=2.0,
-        description="Scales every tool toward doing nothing (0) or beyond its strength (above 1)")
+        description="Scales every tool toward doing nothing (0) or beyond its strength (above 1)", translation_context=CONTEXT)
     # Range (§5.3)
     range_wrist: FloatProperty(
         name="Picking Wrist", default=1.5, min=0.0, soft_max=3.0,
-        description="How much larger the picking hand's quick turns get, relative to the forearm (1: unchanged)")
+        description="How much larger the picking hand's quick turns get, relative to the forearm (1: unchanged)", translation_context=CONTEXT)
     range_fingers: FloatProperty(
         name="Fretting Fingers", default=1.3, min=0.0, soft_max=3.0,
         description="How much larger the fretting fingers' quick moves get, per joint (1: unchanged). Quick "
-                    "presses overshoot slightly")
+                    "presses overshoot slightly", translation_context=CONTEXT)
     range_cutoff: FloatProperty(
         name="Cutoff (Hz)", default=1.0, min=0.1, max=5.0,
         description="Motion slower than this is the posture, which Range and Snap keep; faster motion is the "
-                    "detail they work on")
+                    "detail they work on", translation_context=CONTEXT)
     # Snap (§5.4)
     snap_strokes: FloatProperty(
         name="Strokes", default=2.0, min=1.0, soft_max=5.0,
         description="Steepness of the picking hand's strokes: each stroke is retimed along an S-curve with this "
-                    "exponent, keeping where it starts, ends and crosses half way (1: unchanged)")
+                    "exponent, keeping where it starts, ends and crosses half way (1: unchanged)", translation_context=CONTEXT)
     snap_fingers: FloatProperty(
         name="Fretting Fingers", default=2.0, min=1.0, soft_max=5.0,
-        description="Steepness of the fretting fingers' presses and releases (1: unchanged)")
+        description="Steepness of the fretting fingers' presses and releases (1: unchanged)", translation_context=CONTEXT)
     snap_picking: BoolProperty(
         name="Picking Fingers", default=False,
-        description="Also snap the picking hand's fingers, for fingerpicking")
+        description="Also snap the picking hand's fingers, for fingerpicking", translation_context=CONTEXT)
     snap_picking_fingers: FloatProperty(
         name="Picking Strength", default=2.0, min=1.0, soft_max=5.0,
-        description="Steepness of the picking fingers' moves (1: unchanged)")
+        description="Steepness of the picking fingers' moves (1: unchanged)", translation_context=CONTEXT)
     stroke_min: FloatProperty(
         name="Smallest Stroke", subtype='ANGLE', default=math.radians(4.0), min=math.radians(0.1),
-        max=math.radians(90.0), description="Strokes of the picking hand smaller than this are left as they are")
+        max=math.radians(90.0), description="Strokes of the picking hand smaller than this are left as they are", translation_context=CONTEXT)
     finger_min: FloatProperty(
         name="Smallest Finger Move", subtype='ANGLE', default=math.radians(8.0), min=math.radians(0.1),
         max=math.radians(180.0),
         description="Finger moves smaller than this, in the finger's total bend over its joints, are left as they "
-                    "are")
+                    "are", translation_context=CONTEXT)
     # Swing (§5.5)
     swing: FloatProperty(
         name="Swing", default=1.0, min=0.0, soft_max=3.0,
         description="Arm swing added to the strokes: the wrist travels this many times the pick point's stroke, "
-                    "turned at the shoulder and the elbow (0: off)")
+                    "turned at the shoulder and the elbow (0: off)", translation_context=CONTEXT)
     swing_lead: FloatProperty(
         name="Lead (frames)", default=1.0, soft_min=-3.0, soft_max=3.0,
-        description="How many frames the arm's swing leads the hand's stroke")
+        description="How many frames the arm's swing leads the hand's stroke", translation_context=CONTEXT)
     swing_elbow_share: FloatProperty(
         name="Elbow Share", default=0.7, min=0.0, max=1.0,
-        description="How much of the swing the elbow makes against the shoulder")
+        description="How much of the swing the elbow makes against the shoulder", translation_context=CONTEXT)
     # Roll (§5.6)
     roll_to_twist: BoolProperty(
         name="Roll to Twist Bone", default=True,
         description="Move the forearm roll from the wrist onto the forearm twist bone (MMD 手捩) on both hands, "
-                    "so the forearm skin twists with it. The hands keep their pose")
+                    "so the forearm skin twists with it. The hands keep their pose", translation_context=CONTEXT)
     # Safety (§5.7)
     joint_margin: FloatProperty(
         name="Joint Margin", subtype='ANGLE', default=math.radians(5.0), min=0.0, max=math.radians(45.0),
-        description="Finger joints stay within the range they have in the mocap plus this margin")
+        description="Finger joints stay within the range they have in the mocap plus this margin", translation_context=CONTEXT)
 
-    report: StringProperty(name="Prep Report", description="What the last Apply Prep did")
-    serial: IntProperty(name="Prep Serial", description="Counts the preps, so a bake can tell which one it read")
+    report: StringProperty(name="Prep Report", description="What the last Apply Prep did", translation_context=CONTEXT)
+    serial: IntProperty(name="Prep Serial", description="Counts the preps, so a bake can tell which one it read", translation_context=CONTEXT)
 
 
 MOUNT_SOURCE_ITEMS = (
@@ -368,81 +369,81 @@ class GTR_Settings(PropertyGroup):
     """Scene settings (§3.5)."""
 
     armature: PointerProperty(name="Character", type=bpy.types.Object, poll=_is_armature,
-                              description="The retargeted character armature that plays the mocap")
+                              description="The retargeted character armature that plays the mocap", translation_context=CONTEXT)
     guitar_root: PointerProperty(name="Guitar Root", type=bpy.types.Object, poll=_is_empty,
-                                 description="GTR_ROOT: the empty that carries the normalised guitar frame")
+                                 description="GTR_ROOT: the empty that carries the normalised guitar frame", translation_context=CONTEXT)
     show_overlay: BoolProperty(name="Show Overlay", default=True, update=_redraw,
                                description="Draw the calibrated frames, fingertips, landmark lines and the mount "
-                                           "in the viewport")
+                                           "in the viewport", translation_context=CONTEXT)
     show_magnets: BoolProperty(name="Show Magnets", default=True, update=_redraw,
                                description="Draw the magnets in the overlay, the active one with its reach, and "
-                                           "what they did in the solve the rig shows")
+                                           "what they did in the solve the rig shows", translation_context=CONTEXT)
     preset: EnumProperty(name="Preset", items=_PRESET_ITEMS,
-                         description="Instrument preset: landmarks, magnets, mount, aim and wrist settings")
+                         description="Instrument preset: landmarks, magnets, mount, aim and wrist settings", translation_context=CONTEXT)
 
     # Mount (§5.3)
-    mount_source: EnumProperty(name="Mount", items=MOUNT_SOURCE_ITEMS, default='NONE')
+    mount_source: EnumProperty(name="Mount", items=MOUNT_SOURCE_ITEMS, default='NONE', translation_context=CONTEXT)
     mount_t: FloatVectorProperty(
         name="Mount Offset (m)", size=3, precision=4, update=_redraw,
         description="Guitar origin relative to the chest bone head, in the rest-aligned chest frame (X: the "
-                    "character's left, Y: up, Z: forward), before the spine auto-scale")
+                    "character's left, Y: up, Z: forward), before the spine auto-scale", translation_context=CONTEXT)
     mount_q: FloatVectorProperty(
         name="Mount Rotation", size=4, subtype='QUATERNION', default=(1.0, 0.0, 0.0, 0.0), update=_redraw,
-        description="Guitar frame in the rest-aligned chest frame")
-    mount_frame: IntProperty(name="Capture Frame", description="Frame the mount was captured at")
-    mount_preset: StringProperty(name="Mount Preset", description="Name of the preset the mount came from")
+        description="Guitar frame in the rest-aligned chest frame", translation_context=CONTEXT)
+    mount_frame: IntProperty(name="Capture Frame", description="Frame the mount was captured at", translation_context=CONTEXT)
+    mount_preset: StringProperty(name="Mount Preset", description="Name of the preset the mount came from", translation_context=CONTEXT)
 
     # Mode and range (§5.8)
     mode: EnumProperty(name="Mode", items=MODE_ITEMS, default='FOLLOW', update=_mode_changed,
                        description="Switches the neck aim and the fretboard-edge magnet like SAO's Alt+A; the "
-                                   "fields stay editable")
-    range_overrides: CollectionProperty(type=GTR_RangeOverride)
-    active_range_index: IntProperty()
+                                   "fields stay editable", translation_context=CONTEXT)
+    range_overrides: CollectionProperty(type=GTR_RangeOverride, translation_context=CONTEXT)
+    active_range_index: IntProperty(translation_context=CONTEXT)
     handedness: EnumProperty(
         name="Handedness", default='RIGHT',
         items=(('RIGHT', "Right-Handed", "Frets with the left hand and strums with the right"),
-               ('LEFT', "Left-Handed", "Frets with the right hand and strums with the left")))
+               ('LEFT', "Left-Handed", "Frets with the right hand and strums with the left")), translation_context=CONTEXT)
     iterations: IntProperty(name="Iterations", default=4, min=1, soft_max=10,
                             description="Solve iterations per frame: in Follow mode, neck aims, each followed by "
-                                        "the magnets and the IK")
+                                        "the magnets and the IK", translation_context=CONTEXT)
     relax: FloatProperty(name="Relax", default=1.0, min=0.05, max=1.0,
                          description="Share of each new aim rotation taken per iteration; lower it if the "
-                                     "guitar oscillates between iterations")
-    use_scene_frame_range: BoolProperty(name="Use Scene Range", default=True)
-    frame_start: IntProperty(name="Start", default=1)
-    frame_end: IntProperty(name="End", default=250)
+                                     "guitar oscillates between iterations", translation_context=CONTEXT)
+    use_scene_frame_range: BoolProperty(name="Use Scene Range", default=True, translation_context=CONTEXT)
+    frame_start: IntProperty(name="Start", default=1, translation_context=CONTEXT)
+    frame_end: IntProperty(name="End", default=250, translation_context=CONTEXT)
 
     # Aim (§5.4)
     aim_enabled: BoolProperty(name="Aim Neck", default=True,
-                              description="Swing the neck toward the fretting wrist (FOLLOW mode)")
-    aim_weight: FloatProperty(name="Aim Weight", default=1.0, min=0.0, max=1.0)
+                              description="Swing the neck toward the fretting wrist (FOLLOW mode)", translation_context=CONTEXT)
+    aim_weight: FloatProperty(name="Aim Weight", default=1.0, min=0.0, max=1.0, translation_context=CONTEXT)
     aim_max_swing: FloatProperty(name="Max Swing", subtype='ANGLE', default=math.radians(35.0),
-                                 min=0.0, max=math.pi)
+                                 min=0.0, max=math.pi, translation_context=CONTEXT)
     aim_hand_offset: FloatVectorProperty(
         name="Aim Hand Offset (m)", size=3, precision=4, default=SAO_AIM_HAND_OFFSET,
         description="Aim point relative to the fretting wrist, in the rest-aligned hand frame "
-                    "(SAO: (0.6, -0.25, 0) MMD units)")
+                    "(SAO: (0.6, -0.25, 0) MMD units)", translation_context=CONTEXT)
 
     # Wrist (§5.7)
     wrist_blend: FloatProperty(name="Wrist Blend", default=0.5, min=0.0, max=1.0,
-                               description="Share of the guitar-relative rotation in the fretting wrist")
+                               description="Share of the guitar-relative rotation in the fretting wrist", translation_context=CONTEXT)
     wrist_offset: FloatVectorProperty(
         name="Wrist Offset", size=4, subtype='QUATERNION', default=SAO_WRIST_OFFSET,
         description="Fretting-hand rotation relative to the guitar: the hand's rest-aligned frame turned by "
-                    "axis_rot (SAO: Euler 60°, 180°, 0° in its hand-tracking frame)")
+                    "axis_rot (SAO: Euler 60°, 180°, 0° in its hand-tracking frame)", translation_context=CONTEXT)
     wrist_source: EnumProperty(
         name="Wrist", default='DEFAULT',
         items=(('DEFAULT', "SAO Default", "SAO's rotation_reference offset"),
                ('PRESET', "Preset", "From a preset"),
-               ('CAPTURE', "Captured", "Captured from a pose of the fretting hand on the guitar")))
-    wrist_frame: IntProperty(name="Wrist Capture Frame", description="Frame the wrist offset was captured at")
+               ('CAPTURE', "Captured", "Captured from a pose of the fretting hand on the guitar")), translation_context=CONTEXT)
+    wrist_frame: IntProperty(name="Wrist Capture Frame", description="Frame the wrist offset was captured at", translation_context=CONTEXT)
     wrist_direction: EnumProperty(
         name="Yaw Direction", default='NEGATIVE',
         description="When the mocap wrist faces more than 120° away from the target about the up axis, turn it "
                     "this way instead of the shorter way (SAO's constrained_direction)",
         items=(('NEGATIVE', "Negative", "SAO's setting (-1) in all guitar scenes"),
                ('POSITIVE', "Positive", "Turn the other way (+1)"),
-               ('NONE', "Shorter Way", "Always blend the shorter way")))
+               ('NONE', "Shorter Way", "Always blend the shorter way")), translation_context=CONTEXT)
 
     # Scaling (§5.1)
     autoscale_policy: EnumProperty(
@@ -452,147 +453,147 @@ class GTR_Settings(PropertyGroup):
         items=(('INDEX_JS', "index.js", "Magnet hand offsets scale with the palm, like the neck aim"),
                ('MIN_JS', "min.js", "Magnet hand offsets scale with the arm, like SAO's arm-normalised magnet "
                                     "space for VRM avatars"),
-               ('NONE', "None", "Nothing is scaled to the character")))
+               ('NONE', "None", "Nothing is scaled to the character")), translation_context=CONTEXT)
 
     # Reach (§5.5)
     reach_clamp: FloatProperty(name="Reach Clamp", default=0.995, min=0.5, max=1.0,
                                description="Keep wrist targets within this share of the arm chain length, or as "
-                                           "far as the mocap wrist if it is further")
+                                           "far as the mocap wrist if it is further", translation_context=CONTEXT)
     use_right_root_bias: BoolProperty(
         name="Right Root Bias", default=False,
         description="Turn the right arm before the IK, like SAO's root_rotation: this moves where the right "
-                    "elbow points")
+                    "elbow points", translation_context=CONTEXT)
     right_root_bias: FloatVectorProperty(name="Bias", size=3, subtype='EULER', default=SAO_RIGHT_ROOT_BIAS,
                                          description="In the rest-aligned upper-arm frame. SAO: (0°, 10°, -15°), "
-                                                     "order ZYX in three.js")
+                                                     "order ZYX in three.js", translation_context=CONTEXT)
 
     # Magnets (§5.5)
-    magnets: CollectionProperty(type=GTR_Magnet)
-    active_magnet_index: IntProperty()
+    magnets: CollectionProperty(type=GTR_Magnet, translation_context=CONTEXT)
+    active_magnet_index: IntProperty(translation_context=CONTEXT)
     barriers_ignore_distance: BoolProperty(
         name="Barriers Ignore Distance", default=True,
-        description="Clamp a hand behind a barrier plane however far behind it is")
+        description="Clamp a hand behind a barrier plane however far behind it is", translation_context=CONTEXT)
     palm_margin_m: FloatProperty(
         name="Palm Margin (m)", default=SAO_PALM_MARGIN, min=0.0, soft_max=0.1, precision=4, update=_redraw,
         description="How far fingertip magnets keep the nearest fingertip above their plane, before the "
-                    "arm-ratio scaling (SAO: the reference palm length / 4)")
+                    "arm-ratio scaling (SAO: the reference palm length / 4)", translation_context=CONTEXT)
 
     # Chest collider (§13, magnet -1)
     collider_enabled: BoolProperty(
         name="Chest Collider", default=False, update=_redraw,
         description="Push the wrists and their fingertips forward out of a capsule around the torso, before the "
-                    "magnets act")
+                    "magnets act", translation_context=CONTEXT)
     collider_hands: EnumProperty(name="Hands", items=SIDE_ITEMS, options={'ENUM_FLAG'}, default={'L', 'R'},
-                                 update=_redraw)
+                                 update=_redraw, translation_context=CONTEXT)
     collider_fingertips: BoolProperty(name="Fingertips", default=True, update=_redraw,
-                                      description="Keep the index, middle and ring fingertips out as well")
+                                      description="Keep the index, middle and ring fingertips out as well", translation_context=CONTEXT)
     collider_radius_m: FloatProperty(
         name="Radius (m)", default=0.12, min=0.01, soft_max=0.4, precision=3, update=_redraw,
-        description="Radius of the capsule, before the spine auto-scale")
+        description="Radius of the capsule, before the spine auto-scale", translation_context=CONTEXT)
     collider_top_m: FloatProperty(
         name="Top (m)", default=0.2, soft_min=-1.0, soft_max=1.0, precision=3, update=_redraw,
-        description="Upper end of the capsule's axis above the chest bone head, along the chest's up axis")
+        description="Upper end of the capsule's axis above the chest bone head, along the chest's up axis", translation_context=CONTEXT)
     collider_bottom_m: FloatProperty(
         name="Bottom (m)", default=-0.3, soft_min=-1.0, soft_max=1.0, precision=3, update=_redraw,
-        description="Lower end of the capsule's axis relative to the chest bone head")
+        description="Lower end of the capsule's axis relative to the chest bone head", translation_context=CONTEXT)
     collider_depth_m: FloatProperty(
         name="Depth (m)", default=0.0, soft_min=-0.3, soft_max=0.3, precision=3, update=_redraw,
-        description="How far in front of the chest bone head the capsule's axis runs")
+        description="How far in front of the chest bone head the capsule's axis runs", translation_context=CONTEXT)
 
     # Filters (§9); lengths in SAO's arm space
     use_filters: BoolProperty(
         name="Filters", default=True,
         description="Filter the solve from frame to frame when baking, where SAO does. Solve Frame solves a frame "
-                    "as the first of a bake, where there is nothing to filter yet")
+                    "as the first of a bake, where there is nothing to filter yet", translation_context=CONTEXT)
     use_filter_fingertips: BoolProperty(name="Fingertips", default=True,
-                                        description="Filter the fingertip shift of fingertip magnets (SAO)")
+                                        description="Filter the fingertip shift of fingertip magnets (SAO)", translation_context=CONTEXT)
     filter_fingertip: FloatVectorProperty(name="Fingertip Filter", size=3, min=0.0, default=filters.SAO_FINGERTIP,
                                           description="One-euro minimum cutoff (Hz), beta and derivative cutoff "
-                                                      "(Hz)")
+                                                      "(Hz)", translation_context=CONTEXT)
     use_filter_wrist: BoolProperty(name="Fretting Wrist", default=True,
                                    description="Filter the fretting wrist's blended rotation, relative to the "
-                                               "chest (SAO)")
+                                               "chest (SAO)", translation_context=CONTEXT)
     filter_wrist: FloatVectorProperty(name="Wrist Filter", size=3, min=0.0, default=filters.SAO_WRIST,
-                                      description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+                                      description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)", translation_context=CONTEXT)
     filter_pull: FloatVectorProperty(name="One Euro Magnets", size=3, min=0.0, default=filters.SAO_PULL,
                                      description="Magnets whose Filter is One Euro: minimum cutoff (Hz), beta and "
-                                                 "derivative cutoff (Hz) on their pull (SAO)")
+                                                 "derivative cutoff (Hz) on their pull (SAO)", translation_context=CONTEXT)
     filter_rotation: FloatVectorProperty(name="Rotation Magnets", size=3, min=0.0, default=filters.SAO_ROTATION,
                                          description="Magnets whose Filter is Rotation: minimum cutoff (Hz), beta and "
                                                      "derivative cutoff (Hz) on the hand's angle about the guitar "
-                                                     "origin (SAO)")
+                                                     "origin (SAO)", translation_context=CONTEXT)
     use_filter_targets: BoolProperty(
         name="Wrist Corrections", default=False,
         description="Filter how far the collider and magnets move each wrist target. Not in SAO; the mocap itself "
-                    "is never filtered")
+                    "is never filtered", translation_context=CONTEXT)
     filter_target: FloatVectorProperty(name="Correction Filter", size=3, min=0.0, default=filters.SAO_TARGET,
-                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)", translation_context=CONTEXT)
     use_filter_guitar: BoolProperty(name="Neck Aim", default=False,
-                                    description="Filter the neck aim's swing. Not in SAO")
+                                    description="Filter the neck aim's swing. Not in SAO", translation_context=CONTEXT)
     filter_guitar: FloatVectorProperty(name="Aim Filter", size=3, min=0.0, default=filters.SAO_WRIST,
-                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)")
+                                       description="One-euro minimum cutoff (Hz), beta and derivative cutoff (Hz)", translation_context=CONTEXT)
 
     # Pass-through (mocap prep §6.2)
     passthrough_hands: EnumProperty(
         name="Pass-Through", items=SIDE_ITEMS, options={'ENUM_FLAG'}, default={'R'},
         description="Hands whose quick motion passes through the magnets: the magnets act on the slow part of the "
                     "wrist's path, and the strokes ride on top. The fretting hand needs its magnets to hold it on "
-                    "the fretboard")
+                    "the fretboard", translation_context=CONTEXT)
     passthrough_cutoff: FloatProperty(
         name="Cutoff (Hz)", default=1.0, min=0.1, max=10.0,
-        description="Wrist motion faster than this, relative to the chest, passes through the magnets")
+        description="Wrist motion faster than this, relative to the chest, passes through the magnets", translation_context=CONTEXT)
     passthrough_gain: FloatProperty(
         name="Gain", default=1.0, min=0.0, soft_max=2.0,
-        description="Share of the quick wrist motion that passes through (0: the magnets act on all of it)")
+        description="Share of the quick wrist motion that passes through (0: the magnets act on all of it)", translation_context=CONTEXT)
 
     # Bake (§8) and post-processing (§9)
     guitar_space: EnumProperty(
         name="Guitar Keys", default='CHEST',
         items=(('CHEST', "Chest Bone", "Parent GTR_ROOT to the chest bone and key it relative to the bone, so the "
                                        "guitar follows later edits of the body"),
-               ('WORLD', "World", "Key GTR_ROOT in world space, without a parent")))
+               ('WORLD', "World", "Key GTR_ROOT in world space, without a parent")), translation_context=CONTEXT)
     bake_hide_meshes: BoolProperty(
         name="Hide Meshes While Baking", default=True,
         description="Disable the scene's meshes in viewports during the bake, which makes it much faster. The pose "
-                    "does not depend on them, and they come back afterwards")
+                    "does not depend on them, and they come back afterwards", translation_context=CONTEXT)
     bake_interpolation: EnumProperty(
         name="Interpolation", default='LINEAR',
         items=(('LINEAR', "Linear", "Straight between the per-frame keys"),
-               ('BEZIER', "Bezier", "Smooth between the per-frame keys")))
+               ('BEZIER', "Bezier", "Smooth between the per-frame keys")), translation_context=CONTEXT)
     smooth_mode: EnumProperty(
         name="Smooth", default='CORRECTION',
         items=(('CORRECTION', "Correction", "Low-pass only what the solve changed in the arms, so the mocap's own "
                                            "quick motion (and the prep's) stays"),
-               ('KEYS', "Keys", "Low-pass the baked arm keys themselves")))
+               ('KEYS', "Keys", "Low-pass the baked arm keys themselves")), translation_context=CONTEXT)
     smooth_cutoff_arms: FloatProperty(name="Arm Cutoff (Hz)", default=6.0, min=0.1,
-                                      description="Post-bake low-pass cutoff for the arm channels")
+                                      description="Post-bake low-pass cutoff for the arm channels", translation_context=CONTEXT)
     smooth_cutoff_guitar: FloatProperty(name="Guitar Cutoff (Hz)", default=3.0, min=0.1,
-                                        description="Post-bake low-pass cutoff for the guitar channels")
+                                        description="Post-bake low-pass cutoff for the guitar channels", translation_context=CONTEXT)
     reclamp_tolerance_m: FloatProperty(
         name="Re-clamp Tolerance (m)", default=0.0005, min=0.0, soft_max=0.01, precision=4,
         description="Re-clamp re-solves the frames where a hand is further than this into a barrier or the chest "
-                    "collider")
-    bake_report: StringProperty(name="Bake Report", description="What the last bake, smoothing or re-clamp did")
+                    "collider", translation_context=CONTEXT)
+    bake_report: StringProperty(name="Bake Report", description="What the last bake, smoothing or re-clamp did", translation_context=CONTEXT)
 
     # Diagnostics (§10.6)
     diagnostics: PointerProperty(
         name="Diagnostics", type=bpy.types.Object,
-        description="The empty whose animated custom properties hold what the last bake's solve did on each frame")
+        description="The empty whose animated custom properties hold what the last bake's solve did on each frame", translation_context=CONTEXT)
     diagnostics_metric: EnumProperty(name="Measure", items=[metric[:3] for metric in diagnostics.METRICS],
-                                     description="What the worst frames are ranked by")
+                                     description="What the worst frames are ranked by", translation_context=CONTEXT)
 
     # Helper rig and Solve Frame (§4, §6)
-    prep: PointerProperty(type=GTR_Prep)
+    prep: PointerProperty(type=GTR_Prep, translation_context=CONTEXT)
 
     rig_collection: PointerProperty(name="Rig Collection", type=bpy.types.Collection,
-                                    description="The GuitarRig collection that holds the helper empties")
+                                    description="The GuitarRig collection that holds the helper empties", translation_context=CONTEXT)
     rig_armature: PointerProperty(name="Rig Armature", type=bpy.types.Object,
-                                  description="The armature that carries the helper rig's constraints")
+                                  description="The armature that carries the helper rig's constraints", translation_context=CONTEXT)
     solve_active: BoolProperty(name="Showing a Solve",
-                               description="The rig's constraints are on and show the solve of Solve Frame")
-    solve_frame: IntProperty(name="Solved Frame", description="The frame whose solve the rig shows")
+                               description="The rig's constraints are on and show the solve of Solve Frame", translation_context=CONTEXT)
+    solve_frame: IntProperty(name="Solved Frame", description="The frame whose solve the rig shows", translation_context=CONTEXT)
     solve_serial: IntProperty(name="Solve Serial", description="Counts the solves, so that an undone solve is "
-                                                               "not shown as current")
+                                                               "not shown as current", translation_context=CONTEXT)
 
 
 CLASSES = (
@@ -611,9 +612,9 @@ CLASSES = (
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.Scene.gtr = PointerProperty(type=GTR_Settings)
-    bpy.types.Object.gtr_char = PointerProperty(type=GTR_Character)
-    bpy.types.Object.gtr_guitar = PointerProperty(type=GTR_Guitar)
+    bpy.types.Scene.gtr = PointerProperty(type=GTR_Settings, translation_context=CONTEXT)
+    bpy.types.Object.gtr_char = PointerProperty(type=GTR_Character, translation_context=CONTEXT)
+    bpy.types.Object.gtr_guitar = PointerProperty(type=GTR_Guitar, translation_context=CONTEXT)
 
 
 def unregister():

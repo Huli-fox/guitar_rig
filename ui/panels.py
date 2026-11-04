@@ -2,12 +2,12 @@
 mount, magnets, solve (with the range overrides), bake and diagnostics."""
 
 import math
-import textwrap
 
 import bpy
 from mathutils import Quaternion, Vector
 
-from ..core import bonemap, calibrate, diagnostics, keys, landmarks, magnets, modes, prepjob, solver
+from ..i18n import CONTEXT, iface, mark, msg, wrap
+from ..core import bonemap, calibrate, diagnostics, guitar_frame, keys, landmarks, magnets, modes, prepjob, solver
 from ..core.bonemap import SIDES
 from ..ops import prep as prep_ops
 from ..rig import build
@@ -31,23 +31,24 @@ def draw_messages(layout, context, messages):
     col = layout.column(align=True)
     for level, text in messages:
         icon = MESSAGE_ICONS.get(level, 'INFO')
-        for i, line in enumerate(textwrap.wrap(text, chars) or [""]):
-            col.label(text=line, icon=icon if i == 0 else 'BLANK1')
+        for i, line in enumerate(wrap(iface(text), chars)):
+            col.label(text=line, icon=icon if i == 0 else 'BLANK1', translate=False)
 
 
 def draw_rows(layout, rows, factor=0.45):
     col = layout.box().column(align=True)
     for label, value in rows:
         split = col.split(factor=factor)
-        split.label(text=label)
-        split.label(text=value)
+        split.label(text=iface(label), translate=False)
+        split.label(text=iface(value), translate=False)
 
 
 def _slot_groups():
     groups = [("BODY", "Body", [s for s in bonemap.SLOTS if s.group == 'BODY'])]
-    for group, title in (('ARM', "Arm"), ('FINGERS', "Fingers"), ('CHAIN', "IK Chain")):
+    for group, title in (('ARM', mark('Arm')), ('FINGERS', "Fingers"), ('CHAIN', "IK Chain")):
         for side, side_name in (('L', "Left"), ('R', "Right")):
             slots = [s for s in bonemap.SLOTS if s.group == group and s.side == side]
+            # Extracted as complete phrases by the catalog tool.
             groups.append((f"{group}_{side}", f"{side_name} {title}", slots))
     return groups
 
@@ -61,13 +62,14 @@ class GTR_PT_main(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "Guitar"
     bl_label = "GuitarRig"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
         settings = context.scene.gtr
         layout.prop(settings, "armature")
         if settings.armature is None:
-            layout.label(text="Pick the retargeted character", icon='INFO')
+            layout.label(text="Pick the retargeted character", icon='INFO', text_ctxt=CONTEXT)
         layout.prop(settings, "guitar_root")
         layout.prop(settings, "show_overlay")
 
@@ -90,6 +92,7 @@ class GTR_PT_guitar(bpy.types.Panel):
     bl_category = "Guitar"
     bl_parent_id = "GTR_PT_main"
     bl_label = "Guitar"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
@@ -97,60 +100,70 @@ class GTR_PT_guitar(bpy.types.Panel):
         root = settings.guitar_root
         layout.operator("gtr.normalize_frame", icon='EMPTY_ARROWS')
         if root is None:
-            draw_messages(layout, context, [('INFO', "Select the guitar meshes (or the empty they hang from), "
-                                                     "then Normalise Frame.")])
+            draw_messages(layout, context, [('INFO', msg("Select the guitar meshes (or the empty they hang from), "
+                                                     "then Normalise Frame."))])
             return
         info = root.gtr_guitar
         row = layout.row(align=True)
-        row.operator("gtr.flip_frame", text="Flip X").axis = 'X'
-        row.operator("gtr.flip_frame", text="Flip Z").axis = 'Z'
-        rows = [("Length", f"{info.length_m:.3f} m"), ("Confidence", info.confidence.title())]
+        row.operator("gtr.flip_frame", text="Flip X", text_ctxt=CONTEXT).axis = 'X'
+        row.operator("gtr.flip_frame", text="Flip Z", text_ctxt=CONTEXT).axis = 'Z'
+        rows = [(mark('Length'), msg(
+            '{length_m:.3f} m',
+            length_m=info.length_m)), ("Confidence", info.confidence.title())]
         if info.preset:
             scale = info.fit_scale
-            rows.append(("Fit", f"{'Neck' if info.fit_method == 'NECK' else 'Bounds'}  "
-                                f"×{scale[0]:.2f} ×{scale[1]:.2f} ×{scale[2]:.2f}"))
+            rows.append(("Fit", msg(
+                '{value}  ×{value2:.2f} ×{value3:.2f} ×{value4:.2f}',
+                value=msg('Neck') if info.fit_method == 'NECK' else msg('Bounds'), value2=scale[0], value3=scale[1],
+                value4=scale[2])))
         frame = root.matrix_world.to_quaternion()
         for i, name in enumerate(GUITAR_AXIS_NAMES):
             axis = frame @ Vector([float(j == i) for j in range(3)])
-            rows.append((name, f"{axis.x:+.2f}  {axis.y:+.2f}  {axis.z:+.2f}"))
+            rows.append((name, msg('{x:+.2f}  {y:+.2f}  {z:+.2f}', x=axis.x, y=axis.y, z=axis.z)))
         draw_rows(layout, rows)
         draw_messages(layout, context, calibrate.parse_messages(info.messages))
 
         col = layout.column(align=True)
-        col.prop(settings, "preset", text="")
+        col.prop(settings, "preset", text="", text_ctxt=CONTEXT)
         row = col.row(align=True)
         row.operator("gtr.load_preset", icon='IMPORT')
-        row.operator("gtr.load_preset_file", text="", icon='FILE_FOLDER')
-        row.operator("gtr.save_preset", text="", icon='FILE_TICK')
+        row.operator("gtr.load_preset_file", text="", icon='FILE_FOLDER', text_ctxt=CONTEXT)
+        row.operator("gtr.save_preset", text="", icon='FILE_TICK', text_ctxt=CONTEXT)
 
         header, body = layout.panel("GTR_landmarks", default_closed=False)
         found = landmarks.find(root)
         missing = [role for role in landmarks.ROLES if role.required and role.id not in found]
-        header.label(text="Landmarks" + (f" ({len(missing)} missing)" if missing else ""))
+        header.label(text=iface(msg("Landmarks ({count} missing)", count=len(missing))
+                                if missing else msg("Landmarks")), translate=False)
         if body is not None:
             body.operator("gtr.auto_landmarks", icon='SHADERFX')
             if info.landmark_source != 'NONE':
                 text = LANDMARK_TEXT[info.landmark_source]
                 if info.landmark_source == 'AUTO':
-                    text += f" ({info.landmark_confidence.lower()} confidence)"
-                body.label(text=text, icon=CONFIDENCE_ICONS[info.landmark_confidence]
-                           if info.landmark_source == 'AUTO' else 'INFO')
+                    text = msg("Auto-placed ({confidence} confidence)",
+                               confidence=guitar_frame.CONFIDENCE_TEXT[info.landmark_confidence])
+                body.label(text=iface(text), icon=CONFIDENCE_ICONS[info.landmark_confidence]
+                           if info.landmark_source == 'AUTO' else 'INFO', translate=False)
                 draw_messages(body, context, calibrate.parse_messages(info.landmark_messages))
             col = body.column(align=True)
             for role in landmarks.ROLES:
                 obj = found.get(role.id)
                 icon = 'CHECKMARK' if obj is not None else ('ERROR' if role.required else 'DOT')
-                text = role.label + ("" if obj is not None else ("  (missing)" if role.required else "  (optional)"))
-                col.operator("gtr.select_landmark", text=text, icon=icon, emboss=False).role = role.id
+                text = msg(role.label)
+                if obj is None:
+                    text = (msg("{landmark}  (missing)", landmark=text) if role.required
+                            else msg("{landmark}  (optional)", landmark=text))
+                col.operator("gtr.select_landmark", text=iface(text), icon=icon, emboss=False, translate=False).role = role.id
             if not found:
-                draw_messages(body, context, [('INFO', "Load a preset to place the landmarks, or Auto-Place them "
+                draw_messages(body, context, [('INFO', msg("Load a preset to place the landmarks, or Auto-Place them "
                                                        "on the neck and body the add-on finds, then check them on "
-                                                       "the guitar.")])
+                                                       "the guitar."))])
 
 
 class GTR_PT_bones(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_bones"
     bl_label = "Bones"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
@@ -158,19 +171,21 @@ class GTR_PT_bones(_SubPanel, bpy.types.Panel):
         bone_map = obj.gtr_char.bone_map
         layout.operator("gtr.auto_map_bones", icon='BONE_DATA')
         if bone_map.source:
-            layout.label(text=f"Matched: {bone_map.source}")
+            layout.label(text=iface(msg(
+                'Matched: {source}',
+                source=bonemap.source_message(bone_map.source))), translate=False)
         for group_id, title, slots in SLOT_GROUPS:
             header, body = layout.panel(f"GTR_bones_{group_id}", default_closed=group_id != "BODY")
-            header.label(text=title)
+            header.label(text=iface(title), translate=False)
             if body is None:
                 continue
             col = body.column(align=True)
             for slot in slots:
-                col.prop_search(bone_map, slot.key, obj.data, "bones", text=slot.label)
+                col.prop_search(bone_map, slot.key, obj.data, "bones", text=iface(slot.label), translate=False)
             if group_id.startswith("CHAIN"):
                 count = getattr(bone_map, f"chain_count_{group_id[-1]}")
-                col.label(text=f"Chain count: {count}" if count else "Chain count: invalid",
-                          icon='NONE' if count else 'ERROR')
+                col.label(text=iface(msg('Chain count: {count}', count=count) if count else "Chain count: invalid"),
+                          icon='NONE' if count else 'ERROR', translate=False)
         mapping = bonemap.mapping_from(bone_map)
         draw_messages(layout, context, bonemap.validate(obj.data.bones, mapping))
 
@@ -178,6 +193,7 @@ class GTR_PT_bones(_SubPanel, bpy.types.Panel):
 class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_calibration"
     bl_label = "Calibration"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
@@ -188,41 +204,51 @@ class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
         col.prop(cal, "flip_facing")
         col.prop(cal, "axis_rot_ref_angle")
         if not cal.is_valid:
-            layout.label(text="Not calibrated", icon='INFO')
+            layout.label(text="Not calibrated", icon='INFO', text_ctxt=CONTEXT)
             return
 
         mapping = bonemap.mapping_from(obj.gtr_char.bone_map)
         current = calibrate.fingerprint(obj, mapping, cal.flip_facing, cal.axis_rot_ref_angle,
                                         context.scene.unit_settings.scale_length)
         if current != cal.fingerprint:
-            layout.label(text="The rig or bone map changed: calibrate again", icon='ERROR')
+            layout.label(text="The rig or bone map changed: calibrate again", icon='ERROR', text_ctxt=CONTEXT)
 
         tips = list(cal.fingertips)
         estimated = sum(1 for tip in tips if tip.source == 'ESTIMATE')
-        tip_text = f"L {sum(t.side == 'L' for t in tips)}, R {sum(t.side == 'R' for t in tips)}"
+        tip_text = msg(
+            'L {value}, R {value2}',
+            value=sum((t.side == 'L' for t in tips)), value2=sum((t.side == 'R' for t in tips)))
         if estimated:
-            tip_text += f" ({estimated} estimated)"
+            tip_text = msg("L {left}, R {right} ({estimated} estimated)", left=sum(t.side == 'L' for t in tips),
+                           right=sum(t.side == 'R' for t in tips), estimated=estimated)
         rows = [
-            ("Height", f"{cal.height:.3f} m"),
-            ("Arm", f"{cal.arm_len:.3f} m  ×{cal.ratio_arm:.3f}"),
-            ("Palm", f"{cal.palm_len:.3f} m  ×{cal.ratio_palm:.3f}"),
-            ("Spine", f"{cal.spine_len:.3f} m  ×{cal.ratio_spine:.3f}"),
-            ("IK chain L / R", f"{cal.chain_len_L:.3f} / {cal.chain_len_R:.3f} m"),
+            (mark('Height'), msg('{height:.3f} m', height=cal.height)),
+            (mark('Arm'), msg('{arm_len:.3f} m  ×{ratio_arm:.3f}', arm_len=cal.arm_len, ratio_arm=cal.ratio_arm)),
+            (mark('Palm'), msg(
+                '{palm_len:.3f} m  ×{ratio_palm:.3f}',
+                palm_len=cal.palm_len, ratio_palm=cal.ratio_palm)),
+            (mark('Spine'), msg(
+                '{spine_len:.3f} m  ×{ratio_spine:.3f}',
+                spine_len=cal.spine_len, ratio_spine=cal.ratio_spine)),
+            (mark('IK chain L / R'), msg(
+                '{chain_len_L:.3f} / {chain_len_R:.3f} m',
+                chain_len_L=cal.chain_len_L, chain_len_R=cal.chain_len_R)),
             ("Fingertips", tip_text),
         ]
         frame = calibrate.char_frame_world(Quaternion(cal.char_frame), obj.matrix_world)
         for i, name in enumerate(AXIS_NAMES):
             axis = frame @ Vector([float(j == i) for j in range(3)])
-            rows.append((name, f"{axis.x:+.2f}  {axis.y:+.2f}  {axis.z:+.2f}"))
+            rows.append((name, msg('{x:+.2f}  {y:+.2f}  {z:+.2f}', x=axis.x, y=axis.y, z=axis.z)))
         draw_rows(layout, rows)
-        messages = [('INFO', "Overlay: red X (character's left), green Y (up), blue Z (forward); yellow and "
-                             "orange dots are fingertips, magenta is the neck-aim point.")]
+        messages = [('INFO', msg("Overlay: red X (character's left), green Y (up), blue Z (forward); yellow and "
+                             "orange dots are fingertips, magenta is the neck-aim point."))]
         draw_messages(layout, context, messages + calibrate.parse_messages(cal.messages))
 
 
 class GTR_PT_prep(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_prep"
     bl_label = "Prep"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
@@ -230,7 +256,7 @@ class GTR_PT_prep(_SubPanel, bpy.types.Panel):
         obj = settings.armature
         options = settings.prep
         if not obj.gtr_char.calibration.is_valid:
-            layout.label(text="Calibrate first", icon='INFO')
+            layout.label(text="Calibrate first", icon='INFO', text_ctxt=CONTEXT)
             return
         supported, messages = prep_ops.support(obj)
         if not supported:
@@ -238,15 +264,15 @@ class GTR_PT_prep(_SubPanel, bpy.types.Panel):
             return
         layout.prop(options, "intensity", slider=True)
         header, body = layout.panel("GTR_prep_tools", default_closed=True)
-        header.label(text="Tools")
+        header.label(text="Tools", text_ctxt=CONTEXT)
         if body is not None:
             col = body.box().column(align=True)
-            col.label(text="Range")
+            col.label(text="Range", text_ctxt=CONTEXT)
             col.prop(options, "range_wrist")
             col.prop(options, "range_fingers")
             col.prop(options, "range_cutoff")
             col = body.box().column(align=True)
-            col.label(text="Snap")
+            col.label(text="Snap", text_ctxt=CONTEXT)
             col.prop(options, "snap_strokes")
             col.prop(options, "snap_fingers")
             col.prop(options, "stroke_min")
@@ -256,43 +282,44 @@ class GTR_PT_prep(_SubPanel, bpy.types.Panel):
             sub.active = options.snap_picking
             sub.prop(options, "snap_picking_fingers")
             col = body.box().column(align=True)
-            col.label(text="Swing")
+            col.label(text="Swing", text_ctxt=CONTEXT)
             col.prop(options, "swing")
             col.prop(options, "swing_lead")
             col.prop(options, "swing_elbow_share")
             col = body.box().column(align=True)
-            col.label(text="Roll and Safety")
+            col.label(text="Roll and Safety", text_ctxt=CONTEXT)
             col.prop(options, "roll_to_twist")
             col.prop(options, "joint_margin")
         row = layout.row(align=True)
         row.scale_y = 1.4
         row.operator("gtr.apply_prep", icon='SHADERFX')
-        row.operator("gtr.remove_prep", text="", icon='TRASH')
+        row.operator("gtr.remove_prep", text="", icon='TRASH', text_ctxt=CONTEXT)
         if keys.has_prep(obj):
             original = prepjob.is_muted(obj)
             op = layout.operator("gtr.toggle_prep", text="Show Original", icon='HIDE_ON' if original else 'HIDE_OFF',
-                                 depress=original)
+                                 depress=original, text_ctxt=CONTEXT)
             op.original = not original
         messages = prepjob.status(settings) + [m for m in messages if options.roll_to_twist or "Roll" not in m[1]]
         if options.report:
             box = layout.box()
             draw_messages(box, context, calibrate.parse_messages(options.report))
         elif not keys.has_prep(obj):
-            messages.append(('INFO', "Apply Prep touches up the mocap before the bake: wider, crisper picking "
+            messages.append(('INFO', msg("Apply Prep touches up the mocap before the bake: wider, crisper picking "
                                      "strokes with an arm swing, crisp fretting fingers, and the forearm roll on the "
-                                     "twist bone. Your action is not changed."))
+                                     "twist bone. Your action is not changed.")))
         draw_messages(layout, context, messages)
 
 
 class GTR_PT_mount(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_mount"
     bl_label = "Mount and Wrist"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
         settings = context.scene.gtr
         if settings.guitar_root is None or not settings.armature.gtr_char.calibration.is_valid:
-            layout.label(text="Normalise the guitar and calibrate first", icon='INFO')
+            layout.label(text="Normalise the guitar and calibrate first", icon='INFO', text_ctxt=CONTEXT)
             return
         row = layout.row(align=True)
         row.operator("gtr.place_on_mount", icon='SNAP_ON')
@@ -300,27 +327,27 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
         source = settings.mount_source
         text = MOUNT_TEXT[source]
         if source == 'PRESET' and settings.mount_preset:
-            text += f" ({settings.mount_preset})"
+            text = msg("Preset estimate ({preset})", preset=settings.mount_preset)
         elif source == 'CAPTURE':
-            text += f" at frame {settings.mount_frame}"
+            text = msg("Captured at frame {frame}", frame=settings.mount_frame)
         rows = [("Mount", text)]
         if source != 'NONE':
             euler = Quaternion(settings.mount_q).to_euler('XYZ')
             rows.append(("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler)))
         draw_rows(layout, rows, factor=0.3)
         if source != 'NONE':
-            layout.prop(settings, "mount_t", text="")
+            layout.prop(settings, "mount_t", text="", text_ctxt=CONTEXT)
         messages = []
         if source == 'NONE':
-            messages.append(('INFO', "Load a preset for a first estimate, or pose the guitar on the character "
-                                     "(move and rotate GTR_ROOT) and capture it."))
+            messages.append(('INFO', msg("Load a preset for a first estimate, or pose the guitar on the character "
+                                     "(move and rotate GTR_ROOT) and capture it.")))
         elif source == 'PRESET':
-            messages.append(('WARNING', "The preset mount is only an estimate: Place on Mount, adjust GTR_ROOT on "
-                                        "the character, then Capture Mount."))
+            messages.append(('WARNING', msg("The preset mount is only an estimate: Place on Mount, adjust GTR_ROOT on "
+                                        "the character, then Capture Mount.")))
         draw_messages(layout, context, messages)
 
         header, body = layout.panel("GTR_aim", default_closed=True)
-        header.label(text="Neck Aim")
+        header.label(text="Neck Aim", text_ctxt=CONTEXT)
         if body is not None:
             col = body.column()
             col.prop(settings, "aim_enabled")
@@ -329,25 +356,25 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
             sub.prop(settings, "aim_weight")
             sub.prop(settings, "aim_max_swing")
             sub.prop(settings, "aim_hand_offset")
-            draw_messages(body, context, [('INFO', "In Follow mode the neck swings toward the magenta aim point on "
-                                                   "the fretting hand; Align mode switches the aim off.")])
+            draw_messages(body, context, [('INFO', msg("In Follow mode the neck swings toward the magenta aim point on "
+                                                   "the fretting hand; Align mode switches the aim off."))])
 
         header, body = layout.panel("GTR_wrist", default_closed=True)
-        header.label(text="Wrist")
+        header.label(text="Wrist", text_ctxt=CONTEXT)
         if body is not None:
             body.operator("gtr.capture_wrist_offset", icon='PINNED')
             text = WRIST_TEXT[settings.wrist_source]
             if settings.wrist_source == 'CAPTURE':
-                text += f" at frame {settings.wrist_frame}"
+                text = msg("Captured at frame {frame}", frame=settings.wrist_frame)
             euler = Quaternion(settings.wrist_offset).to_euler('XYZ')
-            draw_rows(body, [("Offset", text), ("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler))],
+            draw_rows(body, [(mark('Offset'), text), ("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler))],
                       factor=0.3)
             col = body.column()
             col.prop(settings, "wrist_blend")
             col.prop(settings, "wrist_direction")
-            draw_messages(body, context, [('INFO', "The fretting wrist turns Wrist Blend of the way from the mocap "
+            draw_messages(body, context, [('INFO', msg("The fretting wrist turns Wrist Blend of the way from the mocap "
                                                    "to this rotation on the guitar. To set it, pose the hand on the "
-                                                   "neck and capture it.")])
+                                                   "neck and capture it."))])
 
 
 def draw_magnet(layout, context, settings, item, index):
@@ -356,9 +383,9 @@ def draw_magnet(layout, context, settings, item, index):
     col = box.column()
     col.row(align=True).prop(item, "hand", expand=True)
     col.row(align=True).prop(item, "kind", expand=True)
-    col.prop(item, "landmark_a", text="Plane" if item.kind == 'PLANE' else "Start")
+    col.prop(item, "landmark_a", text=iface("Plane" if item.kind == 'PLANE' else "Start"), translate=False)
     if item.kind == 'LINE':
-        col.prop(item, "landmark_b", text="End")
+        col.prop(item, "landmark_b", text="End", text_ctxt=CONTEXT)
     else:
         col.prop(item, "crossable")
     col.prop(item, "use_default_rotation")
@@ -386,23 +413,26 @@ def draw_magnet(layout, context, settings, item, index):
     cal = obj.gtr_char.calibration if obj is not None else None
     if cal is not None and cal.is_valid:
         reach = item.effective_distance_m * magnets.distance_scale(settings.autoscale_policy, cal.ratio_arm)
-        rows.append(("Reach", f"{reach:.3f} m on this character"))
+        rows.append((mark('Reach'), msg('{reach:.3f} m on this character', reach=reach)))
     result = solver.shown_result(context.scene)
     hit = result.hit(index) if result is not None else None
     if hit is not None:
-        state = "clamp" if hit.barrier else f"weight {hit.weight:.2f}"
-        rows.append(("Solve", f"{hit.distance * result.metres_per_bu * 100.0:.1f} cm away, {state}"))
+        state = "clamp" if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)
+        rows.append(("Solve", msg(
+            '{value:.1f} cm away, {state}',
+            value=hit.distance * result.metres_per_bu * 100.0, state=state)))
     if rows:
         draw_rows(box, rows, factor=0.3)
     if item.filter != 'NONE':
-        text = ("The filter acts from frame to frame when baking: Solve Frame shows a frame unfiltered."
-                if settings.use_filters else "Filters are switched off (Bake > Filters).")
+        text = (mark('The filter acts from frame to frame when baking: Solve Frame shows a frame unfiltered.')
+                if settings.use_filters else mark('Filters are switched off (Bake > Filters).'))
         draw_messages(box, context, [('INFO', text)])
 
 
 class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_magnets"
     bl_label = "Magnets"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
@@ -410,22 +440,22 @@ class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
         row = layout.row()
         row.template_list("GTR_UL_magnets", "", settings, "magnets", settings, "active_magnet_index", rows=4)
         col = row.column(align=True)
-        col.operator("gtr.magnet_add", text="", icon='ADD')
-        col.operator("gtr.magnet_remove", text="", icon='REMOVE')
+        col.operator("gtr.magnet_add", text="", icon='ADD', text_ctxt=CONTEXT)
+        col.operator("gtr.magnet_remove", text="", icon='REMOVE', text_ctxt=CONTEXT)
         col.separator()
-        col.operator("gtr.magnet_move", text="", icon='TRIA_UP').direction = 'UP'
-        col.operator("gtr.magnet_move", text="", icon='TRIA_DOWN').direction = 'DOWN'
+        col.operator("gtr.magnet_move", text="", icon='TRIA_UP', text_ctxt=CONTEXT).direction = 'UP'
+        col.operator("gtr.magnet_move", text="", icon='TRIA_DOWN', text_ctxt=CONTEXT).direction = 'DOWN'
         layout.prop(settings, "show_magnets")
         index = settings.active_magnet_index
         if 0 <= index < len(settings.magnets):
             draw_magnet(layout, context, settings, settings.magnets[index], index)
         else:
-            draw_messages(layout, context, [('INFO', "Load a preset for SAO's magnets, or add your own. They act "
-                                                     "in list order.")])
+            draw_messages(layout, context, [('INFO', msg("Load a preset for SAO's magnets, or add your own. They act "
+                                                     "in list order."))])
 
         header, body = layout.panel("GTR_passthrough", default_closed=True)
-        header.label(text="Pass-Through" + (f" ({', '.join(sorted(settings.passthrough_hands))})"
-                                            if settings.passthrough_hands else ""))
+        header.label(text=iface(msg("Pass-Through ({hands})", hands=', '.join(sorted(settings.passthrough_hands)))
+                                if settings.passthrough_hands else msg("Pass-Through")), translate=False)
         if body is not None:
             col = body.column()
             col.row(align=True).prop(settings, "passthrough_hands")
@@ -433,9 +463,9 @@ class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
             sub.active = bool(settings.passthrough_hands)
             sub.prop(settings, "passthrough_cutoff")
             sub.prop(settings, "passthrough_gain")
-            draw_messages(body, context, [('INFO', "The magnets act on the slow part of these wrists' path, and the "
+            draw_messages(body, context, [('INFO', msg("The magnets act on the slow part of these wrists' path, and the "
                                                    "quick strokes ride on top, kept out of the barriers. Without it, "
-                                                   "a strum-line magnet takes back most of a stroke.")])
+                                                   "a strum-line magnet takes back most of a stroke."))])
 
         header, body = layout.panel("GTR_collider", default_closed=True)
         header.prop(settings, "collider_enabled")
@@ -449,60 +479,64 @@ class GTR_PT_magnets(_SubPanel, bpy.types.Panel):
             sub.prop(settings, "collider_top_m")
             sub.prop(settings, "collider_bottom_m")
             sub.prop(settings, "collider_depth_m")
-            draw_messages(body, context, [('INFO', "A capsule along the chest that pushes the wrists forward out of "
+            draw_messages(body, context, [('INFO', msg("A capsule along the chest that pushes the wrists forward out of "
                                                    "the torso before the magnets act. Lengths are metres before the "
-                                                   "spine auto-scale.")])
+                                                   "spine auto-scale."))])
 
 
 class GTR_PT_solve(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_solve"
     bl_label = "Solve"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
         scene = context.scene
         settings = scene.gtr
         if settings.guitar_root is None or not settings.armature.gtr_char.calibration.is_valid:
-            layout.label(text="Normalise the guitar and calibrate first", icon='INFO')
+            layout.label(text="Normalise the guitar and calibrate first", icon='INFO', text_ctxt=CONTEXT)
             return
         rig = build.find(settings)
         messages = []
         row = layout.row(align=True)
-        row.operator("gtr.build_rig", text="Rebuild Rig" if rig is not None else "Build Rig", icon='CON_KINEMATIC')
-        row.operator("gtr.clean_rig", text="", icon='TRASH')
+        row.operator("gtr.build_rig", text=iface("Rebuild Rig" if rig is not None else "Build Rig"), icon='CON_KINEMATIC', translate=False)
+        row.operator("gtr.clean_rig", text="", icon='TRASH', text_ctxt=CONTEXT)
         if rig is None and settings.rig_collection is not None:
-            messages.append(('WARNING', "The helper rig does not match the character or its bone map: build it "
-                                        "again."))
+            messages.append(('WARNING', msg("The helper rig does not match the character or its bone map: build it "
+                                        "again.")))
         elif rig is None:
-            messages.append(('INFO', "Build Rig adds IK and rotation constraints to each arm. They stay off, so "
-                                     "the mocap plays as before, until you solve a frame."))
+            messages.append(('INFO', msg("Build Rig adds IK and rotation constraints to each arm. They stay off, so "
+                                     "the mocap plays as before, until you solve a frame.")))
 
         layout.prop(settings, "mode", expand=True)
         header, body = layout.panel("GTR_ranges", default_closed=not len(settings.range_overrides))
         count = sum(item.enabled for item in settings.range_overrides)
-        header.label(text="Range Overrides" + (f" ({count})" if count else ""))
+        header.label(text=iface(msg("Range Overrides ({count})", count=count) if count else msg("Range Overrides")),
+                     translate=False)
         if body is not None:
             row = body.row()
             row.template_list("GTR_UL_ranges", "", settings, "range_overrides", settings, "active_range_index",
                               rows=3)
             col = row.column(align=True)
-            col.operator("gtr.range_add", text="", icon='ADD')
-            col.operator("gtr.range_remove", text="", icon='REMOVE')
+            col.operator("gtr.range_add", text="", icon='ADD', text_ctxt=CONTEXT)
+            col.operator("gtr.range_remove", text="", icon='REMOVE', text_ctxt=CONTEXT)
             frame_mode = modes.Schedule(settings).at(scene.frame_current)
-            text = f"Frame {scene.frame_current}: {frame_mode.mode.title()}"
+            text = msg('Frame {frame}: {mode}', frame=scene.frame_current, mode=msg(frame_mode.mode.title()))
             if frame_mode.override != modes.SCENE:
-                text += f" (range {frame_mode.override + 1})"
+                text = msg('Frame {frame}: {mode} (range {range_number})', frame=scene.frame_current,
+                           mode=msg(frame_mode.mode.title()), range_number=frame_mode.override + 1)
             if 0.0 < frame_mode.aim_weight < settings.aim_weight:
-                text += f", neck aim fading ({frame_mode.aim_weight:.2f})"
-            body.label(text=text)
+                text = msg('{status}, neck aim fading ({weight:.2f})', status=text, weight=frame_mode.aim_weight)
+            body.label(text=iface(text), translate=False)
             if any(item.frame_end < item.frame_start for item in settings.range_overrides):
-                body.label(text="A range ends before it starts: it is ignored", icon='ERROR')
-            draw_messages(body, context, [('INFO', "Each range solves its frames in its mode: the neck aim and the "
-                                                   "fretboard-edge magnet switch as with the mode buttons. Lower "
-                                                   f"ranges win where they overlap. The neck aim fades over "
-                                                   f"{modes.FADE_FRAMES} frames at each change.")])
+                body.label(text="A range ends before it starts: it is ignored", icon='ERROR', text_ctxt=CONTEXT)
+            draw_messages(body, context, [('INFO', msg(
+                'Each range solves its frames in its mode: the neck aim and the fretboard-edge magnet switch as '
+                'with the mode buttons. Lower ranges win where they overlap. The neck aim fades over '
+                '{FADE_FRAMES} frames at each change.',
+                FADE_FRAMES=modes.FADE_FRAMES))])
         header, body = layout.panel("GTR_solve_options", default_closed=True)
-        header.label(text="Options")
+        header.label(text="Options", text_ctxt=CONTEXT)
         if body is not None:
             col = body.column()
             col.prop(settings, "iterations")
@@ -518,41 +552,51 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
 
         row = layout.row(align=True)
         row.operator("gtr.solve_frame", icon='PLAY')
-        row.operator("gtr.clear_solve", text="", icon='ARMATURE_DATA')
+        row.operator("gtr.clear_solve", text="", icon='ARMATURE_DATA', text_ctxt=CONTEXT)
         result = solver.shown_result(scene)
         if result is not None:
             rows = []
             frame_mode = result.frame_mode
             if frame_mode is not None and (frame_mode.override != modes.SCENE or len(settings.range_overrides)):
-                text = frame_mode.mode.title() + ("" if frame_mode.override == modes.SCENE
-                                                  else f" (range {frame_mode.override + 1})")
+                text = msg(frame_mode.mode.title())
+                if frame_mode.override != modes.SCENE:
+                    text = msg('{mode} (range {range_number})', mode=text, range_number=frame_mode.override + 1)
                 rows.append(("Mode", text))
             for side in SIDES:
                 side_result = result.sides[side]
                 moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
-                text = f"moved {moved:.1f} cm" + (", reach clamped" if side_result.clamped else "")
-                rows.append((f"{'Left' if side == 'L' else 'Right'} wrist", text))
+                text = (msg("moved {moved:.1f} cm, reach clamped", moved=moved) if side_result.clamped
+                        else msg("moved {moved:.1f} cm", moved=moved))
+                rows.append((msg("Left wrist") if side == 'L' else msg("Right wrist"), text))
                 if side_result.passthrough is not None:
-                    rows.append(("   pass-through",
-                                 f"{side_result.passthrough.length * result.metres_per_bu * 100.0:.1f} cm"))
+                    rows.append((mark('   pass-through'),
+                                 msg(
+                                     '{value:.1f} cm',
+                                     value=side_result.passthrough.length * result.metres_per_bu * 100.0)))
                 for index, hit in side_result.hits:
                     if hit.weight > 0.0 and index < len(settings.magnets):
-                        rows.append(("   " + settings.magnets[index].name,
-                                     "clamp" if hit.barrier else f"weight {hit.weight:.2f}"))
+                        rows.append((msg("   {name}", name=settings.magnets[index].name),
+                                     "clamp" if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)))
             if result.neck is not None:
-                rows.append(("Neck swing", f"{math.degrees(result.swing):.1f}°"
-                                           + (", limited" if result.neck.clamped else "")))
+                rows.append((mark('Neck swing'), msg("{angle:.1f}°, limited", angle=math.degrees(result.swing))
+                             if result.neck.clamped else f"{math.degrees(result.swing):.1f}°"))
             if result.wrist_turn > 0.0:
-                rows.append(("Fretting wrist", f"turned {math.degrees(result.wrist_turn):.1f}°"
-                                               + (", yaw constrained" if result.wrist_constrained else "")))
-            rows.append(("Passes", f"{result.iterations}" + ("" if result.converged else ", not settled")))
+                rows.append((mark('Fretting wrist'), msg(
+                    'turned {angle:.1f}°, yaw constrained',
+                    angle=math.degrees(result.wrist_turn))
+                             if result.wrist_constrained else msg(
+                                 'turned {angle:.1f}°',
+                                 angle=math.degrees(result.wrist_turn))))
+            rows.append((mark('Passes'), str(result.iterations) if result.converged else msg(
+                '{count}, not settled',
+                count=result.iterations)))
             draw_rows(layout, rows, factor=0.5)
             messages += result.messages
         elif settings.solve_active:
-            messages.append(('INFO', "The arms show a solve whose details were lost (undo or reload): solve the "
-                                     "frame again, or show the mocap."))
+            messages.append(('INFO', msg("The arms show a solve whose details were lost (undo or reload): solve the "
+                                     "frame again, or show the mocap.")))
         else:
-            messages.append(('INFO', "Solve Frame shows the solved arms until the frame changes."))
+            messages.append(('INFO', msg("Solve Frame shows the solved arms until the frame changes.")))
         draw_messages(layout, context, messages)
 
 
@@ -562,18 +606,19 @@ def _filter_row(layout, settings, toggle, values):
         col.prop(settings, toggle)
     sub = col.row(align=True)
     sub.active = toggle is None or getattr(settings, toggle)
-    sub.prop(settings, values, text="")
+    sub.prop(settings, values, text="", text_ctxt=CONTEXT)
 
 
 class GTR_PT_bake(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_bake"
     bl_label = "Bake"
+    bl_translation_context = CONTEXT
 
     def draw(self, context):
         layout = self.layout
         settings = context.scene.gtr
         if settings.guitar_root is None or not settings.armature.gtr_char.calibration.is_valid:
-            layout.label(text="Normalise the guitar and calibrate first", icon='INFO')
+            layout.label(text="Normalise the guitar and calibrate first", icon='INFO', text_ctxt=CONTEXT)
             return
         col = layout.column()
         col.prop(settings, "use_scene_frame_range")
@@ -592,23 +637,23 @@ class GTR_PT_bake(_SubPanel, bpy.types.Panel):
             col.active = settings.use_filters
             _filter_row(col, settings, "use_filter_fingertips", "filter_fingertip")
             _filter_row(col, settings, "use_filter_wrist", "filter_wrist")
-            col.label(text="One Euro Magnets")
+            col.label(text="One Euro Magnets", text_ctxt=CONTEXT)
             _filter_row(col, settings, None, "filter_pull")
-            col.label(text="Rotation Magnets")
+            col.label(text="Rotation Magnets", text_ctxt=CONTEXT)
             _filter_row(col, settings, None, "filter_rotation")
             _filter_row(col, settings, "use_filter_targets", "filter_target")
             _filter_row(col, settings, "use_filter_guitar", "filter_guitar")
-            draw_messages(body, context, [('INFO', "One-euro filters: minimum cutoff (Hz), beta and derivative "
+            draw_messages(body, context, [('INFO', msg("One-euro filters: minimum cutoff (Hz), beta and derivative "
                                                    "cutoff (Hz), with SAO's values by default. Lower cutoffs smooth "
-                                                   "more and lag more.")])
+                                                   "more and lag more."))])
 
         row = layout.row(align=True)
         row.scale_y = 1.4
         row.operator("gtr.bake", icon='REC')
-        row.operator("gtr.remove_bake", text="", icon='TRASH')
+        row.operator("gtr.remove_bake", text="", icon='TRASH', text_ctxt=CONTEXT)
 
         header, body = layout.panel("GTR_post", default_closed=False)
-        header.label(text="After the Bake")
+        header.label(text="After the Bake", text_ctxt=CONTEXT)
         if body is not None:
             body.row(align=True).prop(settings, "smooth_mode", expand=True)
             col = body.column(align=True)
@@ -623,13 +668,14 @@ class GTR_PT_bake(_SubPanel, bpy.types.Panel):
             box = layout.box()
             draw_messages(box, context, calibrate.parse_messages(settings.bake_report))
         else:
-            draw_messages(layout, context, [('INFO', "Bake keys the arms and the guitar into GuitarBake NLA strips; "
-                                                     "correct them on the GuitarRefine layer above.")])
+            draw_messages(layout, context, [('INFO', msg("Bake keys the arms and the guitar into GuitarBake NLA strips; "
+                                                     "correct them on the GuitarRefine layer above."))])
 
 
 class GTR_PT_diagnostics(_SubPanel, bpy.types.Panel):
     bl_idname = "GTR_PT_diagnostics"
     bl_label = "Diagnostics"
+    bl_translation_context = CONTEXT
     bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
@@ -637,27 +683,30 @@ class GTR_PT_diagnostics(_SubPanel, bpy.types.Panel):
         settings = context.scene.gtr
         obj = diagnostics.find(settings)
         if diagnostics.action_of(obj) is None:
-            draw_messages(layout, context, [('INFO', "Bake to record what the solve did on each frame: the wrist "
+            draw_messages(layout, context, [('INFO', msg("Bake to record what the solve did on each frame: the wrist "
                                                      "corrections, each magnet's distance and weight, the neck "
-                                                     "swing.")])
+                                                     "swing."))])
             return
         metric = settings.diagnostics_metric
         layout.prop(settings, "diagnostics_metric")
         col = layout.column(align=True)
         ranked = diagnostics.ranking(obj, metric)
         if not ranked:
-            col.label(text=f"No frame has any {diagnostics.METRIC_BY_ID[metric][1].lower()}", icon='CHECKMARK')
+            col.label(text=iface(msg("No frame has any {measure}", measure=msg(diagnostics.METRIC_BY_ID[metric][1]))),
+                      icon='CHECKMARK', translate=False)
         for rank, (frame, value) in enumerate(ranked, 1):
-            op = col.operator("gtr.jump_worst_frame", text=f"Frame {frame}: {diagnostics.format_value(metric, value)}",
-                              icon='TIME' if rank == 1 else 'BLANK1')
+            op = col.operator("gtr.jump_worst_frame", text=iface(msg(
+                'Frame {frame}: {value}',
+                frame=frame, value=diagnostics.format_value(metric, value))),
+                              icon='TIME' if rank == 1 else 'BLANK1', translate=False)
             op.metric = metric
             op.rank = rank
         layout.operator("gtr.show_diagnostics", icon='GRAPH')
-        draw_messages(layout, context, [('INFO', f"{obj.name}'s curves hold every frame: each wrist's correction "
-                                                 "(cm) and IK miss (mm), each magnet's distance d (cm, negative "
-                                                 "behind a plane) and weight w, the neck swing and the fretting "
-                                                 "wrist's turn (°). They show the solve, before any Smooth or "
-                                                 "Re-clamp.")])
+        draw_messages(layout, context, [('INFO', msg(
+            "{name}'s curves hold every frame: each wrist's correction (cm) and IK miss (mm), each magnet's "
+            "distance d (cm, negative behind a plane) and weight w, the neck swing and the fretting wrist's turn "
+            '(°). They show the solve, before any Smooth or Re-clamp.',
+            name=obj.name))])
 
 
 CLASSES = (GTR_PT_main, GTR_PT_guitar, GTR_PT_bones, GTR_PT_calibration, GTR_PT_prep, GTR_PT_mount,

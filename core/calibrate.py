@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from mathutils import Quaternion, Vector
 
+from ..i18n import msg
 from . import bonemap
 from .bonemap import SIDES
 from .mathx import frame_quaternion
@@ -82,11 +83,11 @@ def character_frame(hips, head, upper_arm_l, upper_arm_r):
     up = head - hips
     across = upper_arm_l - upper_arm_r
     if up.length < 1e-9 or across.length < 1e-9:
-        raise CalibrationError("The hips and head, or the two upper arms, are at the same place in rest pose.")
+        raise CalibrationError(msg("The hips and head, or the two upper arms, are at the same place in rest pose."))
     up.normalize()
     x = across - up * across.dot(up)
     if x.length < 1e-6 * across.length:
-        raise CalibrationError("The shoulder line is parallel to the hips-to-head line in rest pose.")
+        raise CalibrationError(msg("The shoulder line is parallel to the hips-to-head line in rest pose."))
     x.normalize()
     return frame_quaternion(x, up, x.cross(up))
 
@@ -163,15 +164,17 @@ def compute(arm_obj, mapping, *, flip=False, ref_angle=0.0, metres_per_bu=1.0):
         name = mapping.get(key, "")
         found = bones.get(name) if name else None
         if found is None and required:
-            raise CalibrationError(f"{bonemap.SLOT_BY_KEY[key].title} is not mapped to a bone.")
+            raise CalibrationError(msg('{title} is not mapped to a bone.', title=bonemap.SLOT_BY_KEY[key].title))
         return found
 
     mw = arm_obj.matrix_world
     scale = mw.to_scale()
     if mw.to_3x3().determinant() < 0.0:
-        messages.append(('WARNING', "The armature object has a mirroring (negative) scale; rotations may be wrong."))
+        messages.append(('WARNING', msg(
+            'The armature object has a mirroring (negative) scale; rotations may be wrong.')))
     elif max(scale) > 1.001 * min(scale):
-        messages.append(('WARNING', "The armature object has a non-uniform scale; apply it for reliable rotations."))
+        messages.append(('WARNING', msg(
+            'The armature object has a non-uniform scale; apply it for reliable rotations.')))
 
     hips, head = bone("hips"), bone("head")
     bone("chest")
@@ -196,9 +199,9 @@ def compute(arm_obj, mapping, *, flip=False, ref_angle=0.0, metres_per_bu=1.0):
             if across.length > 1e-9:
                 votes.append(across.normalized().dot(forward))
     if votes and max(votes) < -0.3:
-        messages.append(('WARNING', "The index fingers sit behind the ring fingers relative to the detected facing "
+        messages.append(('WARNING', msg("The index fingers sit behind the ring fingers relative to the detected facing "
                                     "(Z): left and right may be swapped in the bone map. Check the overlay, and use "
-                                    "Flip Facing if the frame is wrong."))
+                                    "Flip Facing if the frame is wrong.")))
 
     def metres(a, b):
         return (mw @ a - mw @ b).length * metres_per_bu
@@ -212,34 +215,37 @@ def compute(arm_obj, mapping, *, flip=False, ref_angle=0.0, metres_per_bu=1.0):
         palm_len = metres(hand['L'].head_local, middle.head_local)
     else:
         palm_len = metres(hand['L'].head_local, hand['L'].tail_local)
-        messages.append(('WARNING', "No left middle-finger proximal bone: the palm length is taken from the hand "
-                                    "bone."))
+        messages.append(('WARNING', msg("No left middle-finger proximal bone: the palm length is taken from the hand "
+                                    "bone.")))
 
     neck = bone("neck", False)
     if neck is None:
         neck = head
-        messages.append(('WARNING', "No neck bone: the spine length is measured up to the head instead."))
+        messages.append(('WARNING', msg("No neck bone: the spine length is measured up to the head instead.")))
     thigh = bone("thigh_L", False)
     if thigh is None:
         thigh = hips
-        messages.append(('WARNING', "No left upper-leg bone: the spine length is measured from the hips instead."))
+        messages.append(('WARNING', msg(
+            'No left upper-leg bone: the spine length is measured from the hips instead.')))
     spine_len = (mw @ neck.head_local - mw @ thigh.head_local).dot(up_world) * metres_per_bu
 
     if min(arm_len, palm_len, spine_len, *chain_len.values()) <= 1e-6:
-        raise CalibrationError("An arm, palm or spine length is zero or negative; check the bone map.")
+        raise CalibrationError(msg("An arm, palm or spine length is zero or negative; check the bone map."))
 
     heights = [(mw @ p).dot(up_world) for b in bones for p in (b.head_local, b.tail_local)]
     height = (max(heights) - min(heights)) * metres_per_bu
     if not HEIGHT_RANGE[0] <= height <= HEIGHT_RANGE[1]:
-        messages.append(('WARNING', f"The character is {height:.2f} m tall. GuitarRig works in metres: check the "
-                                    "object scale and the scene's unit scale."))
+        messages.append(('WARNING', msg(
+            'The character is {height:.2f} m tall. GuitarRig works in metres: check the object scale and the '
+            "scene's unit scale.",
+            height=height)))
 
     char_inv = char_frame.inverted()
     axis_rot = {}
     for side in SIDES:
         rest_dir = char_inv @ (hand[side].head_local - forearm[side].head_local)
         if rest_dir.length < 1e-9:
-            raise CalibrationError(f"The {side} forearm and hand start at the same place in rest pose.")
+            raise CalibrationError(msg('The {side} forearm and hand start at the same place in rest pose.', side=side))
         axis_rot[side] = axis_rot_from(rest_dir, side, ref_angle)
 
     tips = []
@@ -251,14 +257,17 @@ def compute(arm_obj, mapping, *, flip=False, ref_angle=0.0, metres_per_bu=1.0):
                 tip, source = fingertip_local(distal, bone(f"{finger}_intermediate_{side}", False))
                 side_tips.append(Fingertip(side, finger, distal.name, tip, source))
         if not side_tips:
-            hand_name = "left" if side == 'L' else "right"
-            messages.append(('INFO', f"No finger bones on the {hand_name} hand: fingertip v2 is off there and only "
-                                     "the palm margin applies."))
+            hand_name = msg("left") if side == 'L' else msg("right")
+            messages.append(('INFO', msg(
+                'No finger bones on the {hand_name} hand: fingertip v2 is off there and only the palm margin '
+                'applies.',
+                hand_name=hand_name)))
         tips += side_tips
     estimated = sum(1 for tip in tips if tip.source == 'ESTIMATE')
     if estimated:
-        messages.append(('INFO', f"{estimated} fingertip(s) estimated from the finger joints because the bone tails "
-                                 "look unreliable."))
+        messages.append(('INFO', msg(
+            '{estimated} fingertip(s) estimated from the finger joints because the bone tails look unreliable.',
+            estimated=estimated)))
 
     return Calibration(
         char_frame=char_frame, metres_per_bu=metres_per_bu, height=height,
@@ -289,16 +298,13 @@ def _digits(values):
 
 
 def format_messages(messages):
-    return "\n".join(f"{level}\t{text}" for level, text in messages)
+    from ..i18n.messages import dumps
+    return dumps(messages)
 
 
 def parse_messages(text):
-    messages = []
-    for line in text.splitlines():
-        level, _, message = line.partition("\t")
-        if message:
-            messages.append((level, message))
-    return messages
+    from ..i18n.messages import loads
+    return loads(text)
 
 
 def store(cal, pg):

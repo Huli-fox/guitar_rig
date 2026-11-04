@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from mathutils import Euler, Quaternion, Vector
 
+from ..i18n import msg
 from .guitar_frame import Measurements
 from .wrist import HAND_FRAME
 
@@ -135,13 +136,24 @@ def load(preset_id_or_path):
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except OSError as exc:
-        raise PresetError(f"Cannot read the preset {preset_id_or_path!r}: {exc.strerror or exc}.") from exc
+        raise PresetError(msg(
+            'Cannot read the preset {preset_id_or_path!r}: {value}.',
+            preset_id_or_path=preset_id_or_path, value=exc.strerror or exc)) from exc
     except ValueError as exc:
-        raise PresetError(f"The preset {os.path.basename(path)} is not valid JSON: {exc}.") from exc
+        raise PresetError(msg(
+            'The preset {value} is not valid JSON: {exc}.',
+            value=os.path.basename(path), exc=exc)) from exc
     try:
-        return parse(data, preset_id_or_path)
+        preset = parse(data, preset_id_or_path)
+        if os.path.dirname(os.path.abspath(path)) == os.path.abspath(PRESET_DIR):
+            preset.name = msg(preset.name)
+            preset.description = msg(preset.description)
+            preset.notes = [msg(note) for note in preset.notes]
+        return preset
     except (KeyError, TypeError, ValueError, IndexError) as exc:
-        raise PresetError(f"The preset {os.path.basename(path)} is malformed: {exc!r}.") from exc
+        raise PresetError(msg(
+            'The preset {value} is malformed: {exc!r}.',
+            value=os.path.basename(path), exc=exc)) from exc
 
 
 def _unit(data):
@@ -165,7 +177,9 @@ MAGNET_PROPS = {"peak_m": "peak", "hand_offset_m": "hand_offset"}  # GTR_Magnet 
 def parse(data, preset_id=""):
     version = data.get("format", FORMAT)
     if version > FORMAT:
-        raise ValueError(f"format {data['format']} is newer than this add-on reads ({FORMAT})")
+        raise ValueError(msg(
+            'format {value} is newer than this add-on reads ({FORMAT})',
+            value=data['format'], FORMAT=FORMAT))
     unit = _unit(data)
     frame = Quaternion(data.get("frame", (1.0, 0.0, 0.0, 0.0))).normalized()
     landmarks = {}
@@ -267,16 +281,19 @@ def fit(reference, target):
     else:
         size_ref, size = reference.size, target.size
         if np.any(size_ref <= 0.0) or np.any(size <= 0.0):
-            raise PresetError("The guitar or the preset reference has no extent along an axis.")
+            raise PresetError(msg("The guitar or the preset reference has no extent along an axis."))
         scale = size / size_ref
         anchor_ref, anchor = reference.bounds_min, target.bounds_min
-        messages.append(('WARNING', "No neck found on " + ("the guitar" if t is None else "the preset reference")
-                                    + ": the landmarks are fitted to the bounding box. Check them."))
+        text = (msg("No neck found on the guitar: the landmarks are fitted to the bounding box. Check them.")
+                if t is None else msg("No neck found on the preset reference: the landmarks are fitted to the "
+                                      "bounding box. Check them."))
+        messages.append(('WARNING', text))
     origin = anchor - anchor_ref * scale
     ratios = scale / float(np.exp(np.mean(np.log(scale))))
     lo, hi = FIT_WARN_RANGE
     if np.any(ratios < lo) or np.any(ratios > hi):
-        messages.append(('WARNING', "The guitar's proportions differ a lot from the preset's; check the landmarks."))
+        messages.append(('WARNING', msg(
+            "The guitar's proportions differ a lot from the preset's; check the landmarks.")))
     return Fit(method, scale, origin, messages)
 
 
@@ -303,7 +320,9 @@ def store_magnets(collection, specs, landmark_objects, fitted):
             if key in ("a", "b"):
                 obj = landmark_objects.get(value)
                 if obj is None:
-                    messages.append(('WARNING', f"Magnet {name}: there is no {value} landmark."))
+                    messages.append(('WARNING', msg(
+                        'Magnet {name}: there is no {value} landmark.',
+                        name=name, value=value)))
                 setattr(item, "landmark_" + key, obj)
             elif key == "fingers":
                 item.fingers = set(value)
@@ -312,7 +331,9 @@ def store_magnets(collection, specs, landmark_objects, fitted):
             elif key in MAGNET_FIELDS:
                 setattr(item, key, value)
             else:
-                messages.append(('WARNING', f"Magnet {name}: unknown setting {key!r} ignored."))
+                messages.append(('WARNING', msg(
+                    'Magnet {name}: unknown setting {key!r} ignored.',
+                    name=name, key=key)))
     return messages
 
 

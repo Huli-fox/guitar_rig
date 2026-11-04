@@ -124,8 +124,8 @@ class DiagnosticsBakeTest(BakeTest):
         animate(self.obj, self.root)
         self.assertTrue(any(label.startswith("Bake to record") for label in draw()))
         self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
-        self.assertTrue(any("curves hold every frame" in label for label in draw()))
+        self.assertIn("curves hold every frame", " ".join(draw()))
         self.settings.diagnostics_metric = 'COLLIDER'
-        self.assertIn("No frame has any chest collider", draw())
+        self.assertIn("No frame has any Chest Collider", draw())
         self.assertEqual(bpy.ops.gtr.show_diagnostics(), {'FINISHED'})
         self.assertIs(bpy.context.view_layer.objects.active, diagnostics.find(self.settings))

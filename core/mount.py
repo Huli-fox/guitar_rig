@@ -12,6 +12,7 @@ same s, so that the captured mount scales back to exactly the pose it was captur
 
 from mathutils import Matrix, Quaternion, Vector
 
+from ..i18n import msg
 from . import calibrate
 from .mathx import auto_scale_factor
 
@@ -24,7 +25,7 @@ def chest_pose(arm_obj, cal, chest_bone):
     """(P_chest, Q_chest) in world space for the armature's current pose."""
     pbone = arm_obj.pose.bones.get(chest_bone) if chest_bone else None
     if pbone is None:
-        raise MountError("The chest bone is not mapped, or not in the armature.")
+        raise MountError(msg("The chest bone is not mapped, or not in the armature."))
     matrix = arm_obj.matrix_world @ pbone.matrix
     offset = calibrate.rest_aligned_offset(pbone.bone, Quaternion(cal.char_frame))
     return matrix.translation.copy(), calibrate.rest_aligned(matrix.to_quaternion(), offset).normalized()
@@ -53,7 +54,8 @@ def capture(chest_pos, chest_frame, gtr_matrix, factor, metres_per_bu=1.0):
 def root_scale(root):
     """gtr_scale: GTR_ROOT's world scale. Raises MountError for a mirroring scale, which a rotation cannot hold."""
     if root.matrix_world.to_3x3().determinant() <= 0.0:
-        raise MountError("GTR_ROOT has a negative (mirroring) scale: use Flip X or Flip Z instead of a negative scale.")
+        raise MountError(msg(
+            'GTR_ROOT has a negative (mirroring) scale: use Flip X or Flip Z instead of a negative scale.'))
     return root.matrix_world.to_scale()
 
 

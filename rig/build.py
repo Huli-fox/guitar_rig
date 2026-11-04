@@ -16,6 +16,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Quaternion, Vector
 
+from ..i18n import msg
 from ..core import bonemap, ik, keys
 from ..core.bonemap import SIDES
 
@@ -28,7 +29,7 @@ BEND_NAME = "GTR Bend"
 WRIST_NAME = "GTR Wrist"
 CONSTRAINT_NAMES = {IK_NAME, BEND_NAME, WRIST_NAME}
 IK_ITERATIONS = 500
-SIDE_NAMES = {'L': "left", 'R': "right"}
+SIDE_NAMES = {'L': msg("left"), 'R': msg("right")}
 HELPER_KINDS = {                # kind -> (empty display type, display size in metres, hidden)
     "IKT": ('SPHERE', 0.03, False),
     "POLE": ('CONE', 0.04, False),
@@ -191,12 +192,18 @@ def _check_chain(obj, side, chain):
     bones = obj.data.bones
     for name in (chain.upper, chain.forearm, chain.hand):
         if not name or bones.get(name) is None:
-            raise RigError(f"The {side_name} IK chain is not mapped to existing bones: check the bone map.")
+            raise RigError(msg(
+                'The {side_name} IK chain is not mapped to existing bones: check the bone map.',
+                side_name=side_name))
     if chain.count < 2:
-        raise RigError(f"The {side_name} IK forearm is not below the IK upper arm: check the bone map.")
+        raise RigError(msg(
+            'The {side_name} IK forearm is not below the IK upper arm: check the bone map.',
+            side_name=side_name))
     if not bonemap.is_ancestor(bones[chain.forearm], bones[chain.hand]):
-        raise RigError(f"The {side_name} IK hand is not below the IK forearm, so the IK would not move it: check "
-                       "the bone map.")
+        raise RigError(msg(
+            'The {side_name} IK hand is not below the IK forearm, so the IK would not move it: check the bone '
+            'map.',
+            side_name=side_name))
 
 
 def _other_ik(obj, chain):
@@ -228,13 +235,13 @@ def build(context, settings):
     """
     obj = settings.armature
     if obj is None:
-        raise RigError("Pick the character armature first.")
+        raise RigError(msg("Pick the character armature first."))
     cal = obj.gtr_char.calibration
     if not cal.is_valid:
-        raise RigError("Calibrate the character first.")
+        raise RigError(msg("Calibrate the character first."))
     if obj.pose.ik_solver != 'LEGACY':
-        raise RigError("The armature uses the iTaSC IK solver: switch it to Standard (Armature properties > "
-                       "Inverse Kinematics).")
+        raise RigError(msg("The armature uses the iTaSC IK solver: switch it to Standard (Armature properties > "
+                       "Inverse Kinematics)."))
     chains = chains_from(obj.gtr_char.bone_map)
     for side, chain in chains.items():
         _check_chain(obj, side, chain)
@@ -253,8 +260,10 @@ def build(context, settings):
             _lock(pbone)
         others = _other_ik(obj, chain)
         if others:
-            messages.append(('WARNING', f"The {SIDE_NAMES[side]} arm has its own IK ({', '.join(others)}): mute it "
-                                        "while you solve, or the pole target is ignored."))
+            messages.append(('WARNING', msg(
+                'The {value} arm has its own IK ({value2}): mute it while you solve, or the pole target is '
+                'ignored.',
+                value=SIDE_NAMES[side], value2=', '.join(others))))
         helpers[f"IKT_{side}"][CHAIN_PROP] = chain.key
 
         forearm = obj.pose.bones[chain.forearm]
@@ -286,7 +295,7 @@ def build(context, settings):
     settings.rig_armature = obj
     rig = find(settings)
     if rig is None:
-        raise RigError("The helper rig could not be built.")
+        raise RigError(msg("The helper rig could not be built."))
     return rig, messages
 
 

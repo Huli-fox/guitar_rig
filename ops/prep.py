@@ -5,6 +5,7 @@ from a script; gtr.remove_prep and gtr.toggle_prep (Show Original)."""
 import bpy
 from bpy.props import BoolProperty
 
+from ..i18n import CONTEXT, tip
 from ..core import keys, prepjob
 from ..rig import build
 from .bake import _JobOperator
@@ -24,27 +25,27 @@ def support(obj):
         try:
             _support[key] = (True, prepjob.find_bones(obj).messages)
         except prepjob.PrepError as exc:
-            _support[key] = (False, [('INFO', str(exc))])
+            _support[key] = (False, [('INFO', exc.args[0])])
     return _support[key]
 
 
 def poll_prep(cls, context):
     obj = context.scene.gtr.armature
     if obj is None or not obj.gtr_char.calibration.is_valid:
-        cls.poll_message_set("Calibrate first")
+        cls.poll_message_set(tip("Calibrate first"))
         return False
     if context.mode not in {'OBJECT', 'POSE'}:
-        cls.poll_message_set("Switch to Object or Pose Mode first")
+        cls.poll_message_set(tip("Switch to Object or Pose Mode first"))
         return False
     if not support(obj)[0]:
-        cls.poll_message_set(prepjob.NOT_MMD)
+        cls.poll_message_set(tip(prepjob.NOT_MMD))
         return False
     return True
 
 
 def _poll_layer(cls, context):
     if not keys.has_prep(context.scene.gtr.armature):
-        cls.poll_message_set("Apply Prep first")
+        cls.poll_message_set(tip("Apply Prep first"))
         return False
     return True
 
@@ -56,6 +57,7 @@ class GTR_OT_apply_prep(_JobOperator, bpy.types.Operator):
 
     bl_idname = "gtr.apply_prep"
     bl_label = "Apply Prep"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -72,6 +74,7 @@ class GTR_OT_remove_prep(bpy.types.Operator):
 
     bl_idname = "gtr.remove_prep"
     bl_label = "Remove Prep"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -93,9 +96,10 @@ class GTR_OT_toggle_prep(bpy.types.Operator):
 
     bl_idname = "gtr.toggle_prep"
     bl_label = "Show Original"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
-    original: BoolProperty(name="Original", description="Show the original mocap (mute the prep layer)")
+    original: BoolProperty(name="Original", description="Show the original mocap (mute the prep layer)", translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):

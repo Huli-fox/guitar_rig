@@ -3,6 +3,7 @@
 import bpy
 from bpy.props import EnumProperty
 
+from ..i18n import CONTEXT
 from .common import tag_redraw
 
 
@@ -21,6 +22,7 @@ class GTR_OT_magnet_add(bpy.types.Operator):
 
     bl_idname = "gtr.magnet_add"
     bl_label = "Add Magnet"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -40,6 +42,7 @@ class GTR_OT_magnet_remove(bpy.types.Operator):
 
     bl_idname = "gtr.magnet_remove"
     bl_label = "Remove Magnet"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -60,9 +63,10 @@ class GTR_OT_magnet_move(bpy.types.Operator):
 
     bl_idname = "gtr.magnet_move"
     bl_label = "Move Magnet"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
-    direction: EnumProperty(name="Direction", items=(('UP', "Up", ""), ('DOWN', "Down", "")))
+    direction: EnumProperty(name="Direction", items=(('UP', "Up", ""), ('DOWN', "Down", "")), translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from mathutils import Matrix, Vector
 
+from ..i18n import msg
 from . import landmarks, presets
 
 NECK, NUT, BODY = 'NECK', 'NUT', 'BODY'      # X anchors
@@ -100,31 +101,32 @@ def place(preset, target, metres=1.0, frame_confidence='HIGH'):
     guitar's frame coordinates). `metres`: metres per target unit, for the messages. Raises AutoError."""
     reference = preset.reference
     if target.neck is None:
-        raise AutoError("No neck was found on the guitar: place the landmarks by hand, or load the preset and "
-                        "check them.")
+        raise AutoError(msg("No neck was found on the guitar: place the landmarks by hand, or load the preset and "
+                        "check them."))
     if reference.neck is None:
-        raise AutoError(f"The {preset.name} preset has no neck measurements to place landmarks from.")
+        raise AutoError(msg('The {name} preset has no neck measurements to place landmarks from.', name=preset.name))
     messages, confidence = [], 'HIGH'
     heel_found = target.neck.heel_x is not None
     use_heel = heel_found and reference.neck.heel_x is not None
     ref, tgt = _features(reference, use_heel), _features(target, use_heel)
     if not heel_found:
         confidence = _lower(confidence, 'MEDIUM')
-        messages.append(('WARNING', "No body was found under the neck: the Neck/Body Barrier and the strum line "
-                                    "are placed from where the neck narrows. Check them."))
+        messages.append(('WARNING', msg("No body was found under the neck: the Neck/Body Barrier and the strum line "
+                                    "are placed from where the neck narrows. Check them.")))
     elif not use_heel:
         confidence = _lower(confidence, 'MEDIUM')
-        messages.append(('WARNING', f"The {preset.name} preset was saved without its guitar's heel: the Neck/Body "
-                                    "Barrier and the strum line are placed from where the neck narrows. Check them, "
-                                    "or save the preset again."))
+        messages.append(('WARNING', msg(
+            "The {name} preset was saved without its guitar's heel: the Neck/Body Barrier and the strum line are "
+            'placed from where the neck narrows. Check them, or save the preset again.',
+            name=preset.name)))
 
     neck_ref, neck_tgt = ref.neck.nut_x - ref.heel, tgt.neck.nut_x - tgt.heel
     body_ref, body_tgt = ref.heel - ref.tail, tgt.heel - tgt.tail
     if min(neck_ref, neck_tgt, body_ref) <= 0.0:
-        raise AutoError("The neck or the body has no length along X: check the guitar frame (Flip X).")
+        raise AutoError(msg("The neck or the body has no length along X: check the guitar frame (Flip X)."))
     if body_tgt < MIN_BODY_SHARE * target.length:
         confidence = _lower(confidence, 'LOW')
-        messages.append(('WARNING', "The body is short next to the neck: check the strum line."))
+        messages.append(('WARNING', msg("The body is short next to the neck: check the strum line.")))
         body_tgt = max(body_tgt, MIN_BODY_SHARE * target.length)
     fitted = presets.fit(reference, target)     # Y and Z scales: neck width and thickness, as Load Preset uses
     scale_x = {NECK: neck_tgt / neck_ref, NUT: neck_tgt / neck_ref, BODY: body_tgt / body_ref}
@@ -134,12 +136,12 @@ def place(preset, target, metres=1.0, frame_confidence='HIGH'):
         messages += fitted.messages
     if frame_confidence == 'LOW':
         confidence = 'LOW'
-        messages.append(('WARNING', "The guitar frame has low confidence: check its axes first."))
+        messages.append(('WARNING', msg("The guitar frame has low confidence: check its axes first.")))
 
     placed = {}
     for role, spec in preset.landmarks.items():
         if role not in ANCHORS:
-            messages.append(('WARNING', f"The preset has an unknown landmark role {role!r}."))
+            messages.append(('WARNING', msg('The preset has an unknown landmark role {role!r}.', role=role)))
             continue
         along, across = ANCHORS[role]
         p, sx = spec.position, scale_x[along]
@@ -158,20 +160,25 @@ def place(preset, target, metres=1.0, frame_confidence='HIGH'):
 
     cm = metres * 100.0
     neck = tgt.neck
-    text = (f"Neck {neck_tgt * cm:.0f} cm from the {'heel' if use_heel else 'body'} to the nut, "
-            f"{neck.width_at(neck.nut_x) * cm:.1f} cm wide at the nut; fretboard tilted "
-            f"{math.degrees(math.atan(neck.fret_slope)):+.1f}°.")
+    text = (msg(
+        'Neck {value:.0f} cm from the {value2} to the nut, {value3:.1f} cm wide at the nut; fretboard tilted '
+        '{value4:+.1f}°.',
+        value=neck_tgt * cm, value2=msg('heel') if use_heel else msg('body'), value3=neck.width_at(neck.nut_x) * cm,
+        value4=math.degrees(math.atan(neck.fret_slope))))
     if heel_found:
         past = (neck.joint_x - neck.heel_x) * cm
         if past > HEEL_NOTE_CM:
-            text += f" The body starts under the neck {past:.1f} cm past where the neck narrows (cutaways)."
+            text += msg(
+                ' The body starts under the neck {past:.1f} cm past where the neck narrows (cutaways).',
+                past=past)
         elif past < -HEEL_NOTE_CM:
-            text += f" The heel reaches {-past:.1f} cm up the neck from where it narrows."
+            text += msg(' The heel reaches {value:.1f} cm up the neck from where it narrows.', value=-past)
     messages.insert(0, ('INFO', text))
     extent = (float(target.bounds_min[0]), float(target.bounds_max[0]))
     for role in ("STRUM_A", "STRUM_B"):
         if role in placed and not extent[0] <= placed[role][0].x <= extent[1]:
             confidence = _lower(confidence, 'MEDIUM')
-            messages.append(('WARNING', f"{landmarks.ROLE_BY_ID[role].label} is off the end of the guitar: check "
-                                        "the strum line."))
+            messages.append(('WARNING', msg(
+                '{label} is off the end of the guitar: check the strum line.',
+                label=msg(landmarks.ROLE_BY_ID[role].label))))
     return Placement(placed, confidence, messages)

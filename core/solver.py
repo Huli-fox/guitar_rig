@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from mathutils import Euler, Matrix, Quaternion, Vector
 
+from ..i18n import join, msg
 from . import aim, calibrate, collider, filters, ik, keys, landmarks, magnets, modes, mount, wrist
 from .bonemap import SIDES
 from .mathx import rotation_angle
@@ -57,7 +58,7 @@ from .mathx import rotation_angle
 TOLERANCE_M = 1e-4          # a wrist this close to its target, in metres, has converged
 TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than this has converged
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
-SIDE_NAMES = {'L': "left", 'R': "right"}
+SIDE_NAMES = {'L': msg("left"), 'R': msg("right")}
 FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
 SAO_UNITS_PER_M = 11.0      # MMD units per metre: SAO's lengths, in the arm space of its reference avatar
 CLAMPED_OFFSET_SAO = 1.0 / 9999.0   # SAO's offset of a clamped hand for the rotation filter, in its units
@@ -138,7 +139,7 @@ def magnet_shapes(root, items):
             continue
         a, b = item.landmark_a, item.landmark_b
         if a is None or (item.kind == 'LINE' and b is None):
-            messages.append(('WARNING', f"Magnet {item.name} is missing a landmark and was skipped."))
+            messages.append(('WARNING', msg('Magnet {name} is missing a landmark and was skipped.', name=item.name)))
         elif item.kind == 'LINE':
             shapes[index] = magnets.Shape('LINE', landmarks.local_position(root, a),
                                           landmarks.local_position(root, b))
@@ -369,18 +370,24 @@ def summary(result, items):
     for side in SIDES:
         side_result = result.sides[side]
         moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
-        acting = [f"{items[i].name} {'clamp' if hit.barrier else format(hit.weight, '.2f')}"
+        acting = [msg(
+            '{name} {value}',
+            name=items[i].name, value=msg('clamp') if hit.barrier else format(hit.weight, '.2f'))
                   for i, hit in side_result.hits if hit.weight > 0.0 and i < len(items)]
         contact = side_result.collider
         if contact is not None and contact.weight > 0.0:
-            acting.insert(0, f"chest collider {contact.moved.length * result.metres_per_bu * 100.0:.1f} cm")
-        text = f"{SIDE_NAMES[side]} wrist moved {moved:.1f} cm"
-        parts.append(text + (f" ({', '.join(acting)})" if acting else ""))
+            acting.insert(0, msg(
+                'chest collider {value:.1f} cm',
+                value=contact.moved.length * result.metres_per_bu * 100.0))
+        text = msg('{value} wrist moved {moved:.1f} cm', value=SIDE_NAMES[side], moved=moved)
+        parts.append(text + (msg(' ({value})', value=join(acting)) if acting else ""))
     if result.neck is not None:
-        parts.append(f"neck swung {math.degrees(result.swing):.1f}°")
+        parts.append(msg('neck swung {value:.1f}°', value=math.degrees(result.swing)))
     if result.wrist_turn > 0.0:
-        parts.append(f"{SIDE_NAMES[FRET_SIDE]} wrist turned {math.degrees(result.wrist_turn):.1f}°")
-    return f"Frame {result.frame}: " + "; ".join(parts) + "."
+        parts.append(msg(
+            '{value} wrist turned {value2:.1f}°',
+            value=SIDE_NAMES[FRET_SIDE], value2=math.degrees(result.wrist_turn)))
+    return msg('Frame {frame}: {summary}.', frame=result.frame, summary=join(parts, '; '))
 
 
 # Solving -------------------------------------------------------------------------------------------------------
@@ -388,7 +395,7 @@ def summary(result, items):
 def _load(obj):
     cal = calibrate.load(obj.gtr_char.calibration)
     if cal is None:
-        raise SolveError("Calibrate the character first.")
+        raise SolveError(msg("Calibrate the character first."))
     return cal
 
 
@@ -573,22 +580,22 @@ def prepare(context, rig):
     obj, root = rig.armature, settings.guitar_root
     cal = _load(obj)
     if root is None:
-        raise SolveError("Normalise the guitar first.")
+        raise SolveError(msg("Normalise the guitar first."))
     if settings.mount_source == 'NONE':
-        raise SolveError("Load a preset or capture the mount first.")
+        raise SolveError(msg("Load a preset or capture the mount first."))
     chest = obj.gtr_char.bone_map.chest
     if not chest or obj.pose.bones.get(chest) is None:
-        raise SolveError("The chest bone is not mapped, or not in the armature.")
+        raise SolveError(msg("The chest bone is not mapped, or not in the armature."))
     try:
         scale = mount.root_scale(root)
     except mount.MountError as exc:
-        raise SolveError(str(exc)) from exc
+        raise SolveError(exc.args[0]) from exc
     shapes, messages = magnet_shapes(root, settings.magnets)
     schedule = modes.Schedule(settings)
     axis = aim_axis(root)
     aims = settings.aim_enabled or any(mode == 'FOLLOW' for *_range, mode in schedule.ranges)
     if aims and axis is None:
-        messages.append(('WARNING', "The neck is not aimed: the Neck Pivot or Nut landmark is missing."))
+        messages.append(('WARNING', msg("The neck is not aimed: the Neck Pivot or Nut landmark is missing.")))
     return Setup(obj, root, cal, shapes, axis, scale, scene_fps(scene), schedule, messages)
 
 
@@ -702,19 +709,24 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
     for side, side_result in sides.items():
         name = SIDE_NAMES[side]
         if side_result.clamped:
-            messages.append(('INFO', f"The {name} wrist target was out of reach: it was kept within "
-                                     f"{settings.reach_clamp:.1%} of the arm length, or the mocap wrist's "
-                                     "distance if that is further."))
+            messages.append(('INFO', msg(
+                'The {name} wrist target was out of reach: it was kept within {reach_clamp:.1%} of the arm '
+                "length, or the mocap wrist's distance if that is further.",
+                name=name, reach_clamp=settings.reach_clamp)))
         if side_result.error >= tolerance:
-            messages.append(('WARNING', f"The {name} IK misses its target by "
-                                        f"{side_result.error * cal.metres_per_bu * 1000.0:.1f} mm: check the arm "
-                                        "bones for IK locks, limits or stretch."))
+            messages.append(('WARNING', msg(
+                'The {name} IK misses its target by {value:.1f} mm: check the arm bones for IK locks, limits or '
+                'stretch.',
+                name=name, value=side_result.error * cal.metres_per_bu * 1000.0)))
     if aimed is not None and aimed.clamped:
-        messages.append(('INFO', f"The neck aim was limited to {math.degrees(settings.aim_max_swing):.0f}° (Max "
-                                 "Swing): the fretting hand is far from the neck."))
+        messages.append(('INFO', msg(
+            'The neck aim was limited to {value:.0f}° (Max Swing): the fretting hand is far from the neck.',
+            value=math.degrees(settings.aim_max_swing))))
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
-        messages.append(('INFO', f"The neck aim had not settled after {count - 1} iterations: raise Iterations, "
-                                 "or lower Relax if the guitar oscillates."))
+        messages.append(('INFO', msg(
+            'The neck aim had not settled after {value} iterations: raise Iterations, or lower Relax if the '
+            'guitar oscillates.',
+            value=count - 1)))
     return FrameResult(scene.frame_current, settings.solve_serial, frame_mode.mode, guitar, sides, count, converged,
                        cal.metres_per_bu, messages, aimed, rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand),
                        constrained, frame_mode)
@@ -774,7 +786,8 @@ def check_messages(errors):
     messages = []
     for side, (elbow, hand) in errors.items():
         if max(elbow, hand) > CHECK_TOLERANCE_M:
-            messages.append(('WARNING', f"The {SIDE_NAMES[side]} IK does not reproduce the current pose: the elbow "
-                                        f"is {elbow * 1000.0:.1f} mm and the wrist {hand * 1000.0:.1f} mm off. Check "
-                                        "the arm bones for IK locks, limits or stretch."))
+            messages.append(('WARNING', msg(
+                'The {value} IK does not reproduce the current pose: the elbow is {value2:.1f} mm and the wrist '
+                '{value3:.1f} mm off. Check the arm bones for IK locks, limits or stretch.',
+                value=SIDE_NAMES[side], value2=elbow * 1000.0, value3=hand * 1000.0)))
     return messages

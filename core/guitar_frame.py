@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..i18n import join, msg
+
 SAMPLES = 150_000           # surface samples; the sampling is seeded, so results are repeatable
 BINS = 200                  # slices along X (about 5 mm on a 1 m guitar)
 HEADSTOCK_SHARE = 0.4       # share of the length at each end compared to find the headstock
@@ -36,6 +38,7 @@ MAX_YAW_FIX = math.radians(10.0)
 HEADSTOCK_MIN_SAMPLES = 100
 CUE_MIN = {'strings': 0.1, 'neck_offset': 0.08, 'headstock': 0.1}
 CUE_TITLES = {'strings': "strings", 'neck_offset': "neck position", 'headstock': "headstock set-back"}
+CONFIDENCE_TEXT = {'HIGH': msg("high"), 'MEDIUM': msg("medium"), 'LOW': msg("low")}
 HEADSTOCK_MIN_RATIO = 1.5
 HEEL_STRIP = 0.4            # the heel search looks at points within this share of the neck width of its middle
 HEEL_DROP = 0.5             # the heel starts where the neck's back drops this share of the way to the body back
@@ -543,7 +546,7 @@ def measure(samples, axes=None):
 def _string_cue(geometry, stats, strings, axes, prof):
     """Signed position of the string parts (indices into `stats`) relative to the slice middles."""
     if len(strings) < 2:
-        return Cue('strings', 0.0, False, f"{len(strings)} long thin parts")
+        return Cue('strings', 0.0, False, msg('{strings_count} long thin parts', strings_count=len(strings)))
     sel = np.isin(stats.part_of, strings)
     coords = geometry.vertices[stats.order[sel]] @ axes
     bins = prof.bin_of(coords[:, 0])
@@ -553,7 +556,9 @@ def _string_cue(geometry, stats, strings, axes, prof):
     offset = (np.bincount(owner, weights=rel[ok], minlength=len(stats.ids))[strings]
               / np.maximum(np.bincount(owner, minlength=len(stats.ids))[strings], 1))
     score = float(np.average(offset, weights=stats.extent[strings]))
-    return Cue('strings', score, abs(score) > CUE_MIN['strings'], f"{len(strings)} long thin parts")
+    return Cue('strings', score, abs(score) > CUE_MIN['strings'], msg(
+        '{strings_count} long thin parts',
+        strings_count=len(strings)))
 
 
 def _neck_offset_cue(prof, span):
@@ -624,11 +629,11 @@ def detect(samples, geometry):
     strings = string_parts(geometry, stats) if stats is not None else np.zeros(0, dtype=np.int64)
     points = samples.points
     if len(points) < 100:
-        raise FrameError("The meshes have no faces to measure.")
+        raise FrameError(msg("The meshes have no faces to measure."))
     centroid = points.mean(axis=0)
     values, vectors = np.linalg.eigh(np.cov((points - centroid).T))
     if values[2] <= 0.0 or values[0] <= 1e-10 * values[2]:
-        raise FrameError("The meshes are flat or a line: they do not look like a guitar.")
+        raise FrameError(msg("The meshes are flat or a line: they do not look like a guitar."))
     axes = np.column_stack((vectors[:, 2], vectors[:, 1], np.cross(vectors[:, 2], vectors[:, 1])))
     messages = []
 
@@ -677,22 +682,24 @@ def detect(samples, geometry):
     measurements = measure(samples, axes)
     if ratio < HEADSTOCK_MIN_RATIO:
         confidence = 'LOW'
-        messages.append(('WARNING', f"Both ends are about as wide ({ratio:.2f}×): check that +X points to the "
-                                    "headstock, and use Flip X if not."))
+        messages.append(('WARNING', msg(
+            'Both ends are about as wide ({ratio:.2f}×): check that +X points to the headstock, and use Flip X if'
+            ' not.',
+            ratio=ratio)))
     valid = [cue for cue in cues if cue.valid]
     if valid:
         agree = [CUE_TITLES[cue.name] for cue in valid if cue.score > 0.0]
         against = [CUE_TITLES[cue.name] for cue in valid if cue.score <= 0.0]
-        text = f"String face from the {', '.join(agree)}"
+        text = msg('String face from: {cues}.', cues=join(msg(cue) for cue in agree))
         if against:
-            text += f"; the {', '.join(against)} disagree{'s' if len(against) == 1 else ''}"
-        messages.append(('INFO' if confidence == 'HIGH' else 'WARNING', text + "."))
+            text += msg(' Conflicting cues: {cues}.', cues=join(msg(cue) for cue in against))
+        messages.append(('INFO' if confidence == 'HIGH' else 'WARNING', text))
     if confidence != 'HIGH' and valid:
-        messages.append(('WARNING', "Check that +Z points out of the strings, and use Flip Z if not."))
+        messages.append(('WARNING', msg("Check that +Z points out of the strings, and use Flip Z if not.")))
     if not valid:
-        messages.append(('WARNING', "The string face could not be told from the geometry: check that +Z points out "
-                                    "of the strings, and use Flip Z if not."))
+        messages.append(('WARNING', msg("The string face could not be told from the geometry: check that +Z points out "
+                                    "of the strings, and use Flip Z if not.")))
     if measurements.neck is None:
-        messages.append(('WARNING', "No neck found: preset landmarks are fitted to the bounding box and need "
-                                    "checking."))
+        messages.append(('WARNING', msg("No neck found: preset landmarks are fitted to the bounding box and need "
+                                    "checking.")))
     return Detection(axes, measurements, ratio, cues, confidence, messages)

@@ -12,7 +12,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion
 
 import rigs
-from guitar_rig.core import baker, keys, prep, prepjob, solver
+from guitar_rig.core import baker, calibrate, keys, prep, prepjob, solver
 from guitar_rig.rig import build
 from guitar_rig.ui import panels
 from test_addon import FakeLayout, auto_map_and_calibrate
@@ -157,7 +157,7 @@ class PrepTest(unittest.TestCase):
         self.assertNotIn("too straight", self.options.report)
         self.assertFalse({"左腕", "左ひじ", "右人指１"} & keyed)
         self.assertTrue(all(len(c.keyframe_points) == len(FRAMES) for c in keys.fcurves(strip.action)))
-        self.assertIn("Prepped frames 1-60", self.options.report)
+        self.assertIn("Prepped frames 1-60", "\n".join(text for _, text in calibrate.parse_messages(self.options.report)))
         self.assertFalse(keys.has_bake(self.obj))
         self.assertFalse(baker.has_bake(self.settings))
         # Show Original mutes the layer, and the twist bone gets its own value back.
@@ -264,7 +264,7 @@ class PrepTest(unittest.TestCase):
         self.assertEqual(bpy.ops.gtr.apply_prep(), {'FINISHED'})
         keyed = {c.data_path.split('"')[1] for c in keys.fcurves(prepjob.prep_action(self.obj))}
         self.assertTrue(set(names) <= keyed)
-        self.assertIn("right fingers", self.options.report)
+        self.assertIn("right fingers", "\n".join(text for _, text in calibrate.parse_messages(self.options.report)))
 
     def test_intensity_scales_toward_neutral(self):
         perform(self.obj)

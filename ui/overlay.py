@@ -27,6 +27,7 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Quaternion, Vector
 
+from ..i18n import iface, msg
 from ..core import aim, bonemap, calibrate, collider, landmarks, magnets, mount, solver
 
 AXIS_COLORS = ((0.95, 0.25, 0.25, 1.0), (0.35, 0.9, 0.3, 1.0), (0.3, 0.5, 1.0, 1.0))
@@ -302,14 +303,18 @@ def build_labels(context):
         contact = side_result.collider
         if contact is not None and contact.weight > 0.0:
             moved = contact.moved.length * result.metres_per_bu * 100.0
-            labels.append((side_result.target, line, f"Chest collider: {moved:.1f} cm", CONTACT_COLOR))
+            labels.append((side_result.target, line, msg(
+                'Chest collider: {moved:.1f} cm',
+                moved=moved), CONTACT_COLOR))
             line += 1
         for index, hit in side_result.hits:
             if hit.weight <= 0.0 or index >= len(settings.magnets):
                 continue
-            state = "clamp" if hit.barrier else f"{hit.weight:.2f}"
+            state = msg("clamp") if hit.barrier else f"{hit.weight:.2f}"
             color = BARRIER_COLOR if hit.barrier else MAGNET_COLORS[side]
-            labels.append((side_result.target, line, f"{settings.magnets[index].name}: {state}", color))
+            labels.append((side_result.target, line, msg(
+                '{name}: {state}',
+                name=settings.magnets[index].name, state=state), color))
             line += 1
     return labels
 
@@ -357,7 +362,7 @@ def _draw_labels():
         blf.color(font, *color)
         blf.position(font, point.x + LABEL_OFFSET[0] * scale,
                      point.y + (LABEL_OFFSET[1] - LABEL_LINE * line) * scale, 0.0)
-        blf.draw(font, text)
+        blf.draw(font, iface(text))
 
 
 def register():

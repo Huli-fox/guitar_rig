@@ -16,6 +16,7 @@ later Smooth or Re-clamp passes.
 import bpy
 import numpy as np
 
+from ..i18n import msg
 from . import keys
 
 OBJECT_NAME = "GTR_Diagnostics"
@@ -229,5 +230,5 @@ def ranking(obj, metric, count=RANK_COUNT):
 def format_value(metric, value):
     unit = METRIC_BY_ID[metric][3]
     if metric == 'UNSETTLED':
-        return f"{value:.0f}{unit}"
+        return msg("{count:.0f} passes", count=value)
     return f"{value:.1f}{'' if unit == '°' else ' '}{unit}"

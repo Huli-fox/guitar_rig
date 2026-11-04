@@ -97,7 +97,9 @@ class RangeBakeTest(BakeTest):
         plain(self.settings)
         self.add_range(3, 5)
         self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
-        self.assertIn("Modes: 1-2 Follow, 3-5 Align*, 6-8 Follow", self.settings.bake_report)
+        from guitar_rig.core.calibrate import parse_messages
+        self.assertIn("Modes: 1-2 Follow, 3-5 Align*, 6-8 Follow",
+                      "\n".join(text for _, text in parse_messages(self.settings.bake_report)))
         self.assert_matches_solve()
 
     def test_filters_restart_at_a_change(self):

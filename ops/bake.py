@@ -8,6 +8,7 @@ import traceback
 import bpy
 from bpy.props import EnumProperty, IntProperty
 
+from ..i18n import CONTEXT, iface, msg, report as rpt, tip
 from ..core import baker, diagnostics, keys, solver
 from ..rig import build
 from .common import report, tag_redraw
@@ -29,7 +30,7 @@ class _JobOperator:
         try:
             return self.make_job(context, build.find(context.scene.gtr))
         except (baker.BakeError, solver.SolveError) as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return None
 
     def _finished(self, context, messages):
@@ -44,7 +45,7 @@ class _JobOperator:
         try:
             messages = job.run(context)
         except (baker.BakeError, solver.SolveError) as exc:
-            self.report({'ERROR'}, str(exc))
+            self.report({'ERROR'}, rpt(exc))
             return {'CANCELLED'}
         return self._finished(context, messages)
 
@@ -65,7 +66,9 @@ class _JobOperator:
         if event.type == 'ESC':
             self._end(context)
             job.cancel(context)
-            self.report({'WARNING'}, f"{self.bl_label} cancelled at frame {job.frame}: nothing was changed.")
+            self.report({'WARNING'}, rpt(msg(
+                '{bl_label} cancelled at frame {frame}: nothing was changed.',
+                bl_label=msg(self.bl_label), frame=job.frame)))
             return {'CANCELLED'}
         if event.type != 'TIMER':
             return {'RUNNING_MODAL'}        # the scene must not change under the job
@@ -80,7 +83,9 @@ class _JobOperator:
             traceback.print_exc()
             self._end(context)
             job.cancel(context)
-            self.report({'ERROR'}, f"{self.bl_label} failed at frame {job.frame}: {exc}")
+            self.report({'ERROR'}, rpt(msg(
+                '{bl_label} failed at frame {frame}: {exc}',
+                bl_label=msg(self.bl_label), frame=job.frame, exc=exc)))
             return {'CANCELLED'}
         context.window_manager.progress_update(job.progress * 100.0)
         self._status(context)
@@ -89,8 +94,9 @@ class _JobOperator:
     def _status(self, context):
         job = self._job
         if context.workspace is not None:
-            context.workspace.status_text_set(f"{self.bl_label}: frame {job.frame} ({job.progress:.0%}). Esc to "
-                                              "cancel.")
+            context.workspace.status_text_set(iface(msg(
+                '{bl_label}: frame {frame} ({progress:.0%}). Esc to cancel.',
+                bl_label=msg(self.bl_label), frame=job.frame, progress=job.progress)))
 
     def _end(self, context):
         wm = context.window_manager
@@ -108,6 +114,7 @@ class GTR_OT_bake(_JobOperator, bpy.types.Operator):
 
     bl_idname = "gtr.bake"
     bl_label = "Bake"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -124,6 +131,7 @@ class GTR_OT_reclamp(_JobOperator, bpy.types.Operator):
 
     bl_idname = "gtr.reclamp"
     bl_label = "Re-clamp"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -131,7 +139,7 @@ class GTR_OT_reclamp(_JobOperator, bpy.types.Operator):
         if not poll_solve(cls, context):
             return False
         if keys.ARM not in keys.bake_strips(context.scene.gtr.armature):
-            cls.poll_message_set("Bake first")
+            cls.poll_message_set(tip("Bake first"))
             return False
         return True
 
@@ -146,13 +154,14 @@ class GTR_OT_smooth_bake(_JobOperator, bpy.types.Operator):
 
     bl_idname = "gtr.smooth_bake"
     bl_label = "Smooth"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         settings = context.scene.gtr
         if not any({keys.ARM, keys.GUITAR} & set(keys.bake_strips(owner)) for owner in baker.bake_owners(settings)):
-            cls.poll_message_set("Bake first")
+            cls.poll_message_set(tip("Bake first"))
             return False
         return True
 
@@ -166,12 +175,13 @@ class GTR_OT_remove_bake(bpy.types.Operator):
 
     bl_idname = "gtr.remove_bake"
     bl_label = "Remove Bake"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         if not baker.has_bake(context.scene.gtr):
-            cls.poll_message_set("There is no bake")
+            cls.poll_message_set(tip("There is no bake"))
             return False
         return True
 
@@ -187,7 +197,7 @@ class GTR_OT_remove_bake(bpy.types.Operator):
 
 def _poll_diagnostics(cls, context):
     if diagnostics.action_of(diagnostics.find(context.scene.gtr)) is None:
-        cls.poll_message_set("Bake first: the bake records the diagnostics")
+        cls.poll_message_set(tip("Bake first: the bake records the diagnostics"))
         return False
     return True
 
@@ -197,10 +207,11 @@ class GTR_OT_jump_worst_frame(bpy.types.Operator):
 
     bl_idname = "gtr.jump_worst_frame"
     bl_label = "Jump to Worst Frame"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER'}
 
-    metric: EnumProperty(name="Measure", items=[metric[:3] for metric in diagnostics.METRICS])
-    rank: IntProperty(name="Rank", default=1, min=1, description="1 for the worst frame, 2 for the next, and so on")
+    metric: EnumProperty(name="Measure", items=[metric[:3] for metric in diagnostics.METRICS], translation_context=CONTEXT)
+    rank: IntProperty(name="Rank", default=1, min=1, description="1 for the worst frame, 2 for the next, and so on", translation_context=CONTEXT)
 
     @classmethod
     def poll(cls, context):
@@ -209,20 +220,24 @@ class GTR_OT_jump_worst_frame(bpy.types.Operator):
     @classmethod
     def description(cls, context, properties):
         _id, name, text, _unit = diagnostics.METRIC_BY_ID[properties.metric]
-        which = "the worst frame" if properties.rank == 1 else f"worst frame #{properties.rank}"
-        return f"Go to {which} by {name.lower()}: {text[0].lower()}{text[1:]}"
+        return tip(msg("Go to worst frame #{rank} by {measure}: {description}",
+                       rank=properties.rank, measure=msg(name), description=msg(text)))
 
     def execute(self, context):
         scene = context.scene
         ranked = diagnostics.ranking(diagnostics.find(scene.gtr), self.metric, self.rank)
-        name = diagnostics.METRIC_BY_ID[self.metric][1].lower()
+        name = msg(diagnostics.METRIC_BY_ID[self.metric][1])
         if len(ranked) < self.rank:
-            self.report({'INFO'}, f"No frame of the bake has a {name} above 0." if not ranked else
-                                  f"Only {len(ranked)} frames have a {name} above 0.")
+            self.report({'INFO'}, rpt(msg('No frame of the bake has a {name} above 0.', name=name) if not ranked else
+                                  msg(
+                                      'Only {ranked_count} frames have a {name} above 0.',
+                                      ranked_count=len(ranked), name=name)))
             return {'CANCELLED'}
         frame, value = ranked[self.rank - 1]
         scene.frame_set(frame)
-        self.report({'INFO'}, f"Frame {frame}: {name} {diagnostics.format_value(self.metric, value)}.")
+        self.report({'INFO'}, rpt(msg(
+            'Frame {frame}: {name} {value}.',
+            frame=frame, name=name, value=diagnostics.format_value(self.metric, value))))
         return {'FINISHED'}
 
 
@@ -231,26 +246,28 @@ class GTR_OT_show_diagnostics(bpy.types.Operator):
 
     bl_idname = "gtr.show_diagnostics"
     bl_label = "Select Curves"
+    bl_translation_context = CONTEXT
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         if context.mode != 'OBJECT':
-            cls.poll_message_set("Switch to Object Mode first")
+            cls.poll_message_set(tip("Switch to Object Mode first"))
             return False
         return _poll_diagnostics(cls, context)
 
     def execute(self, context):
         obj = diagnostics.find(context.scene.gtr)
         if not obj.visible_get():
-            self.report({'WARNING'}, f"{obj.name} is hidden or in an excluded collection: unhide it to see its "
-                                     "curves.")
+            self.report({'WARNING'}, rpt(msg(
+                '{name} is hidden or in an excluded collection: unhide it to see its curves.',
+                name=obj.name)))
             return {'CANCELLED'}
         for other in context.selected_objects:
             other.select_set(False)
         obj.select_set(True)
         context.view_layer.objects.active = obj
-        self.report({'INFO'}, f"Selected {obj.name}: its curves are in the Graph Editor.")
+        self.report({'INFO'}, rpt(msg('Selected {name}: its curves are in the Graph Editor.', name=obj.name)))
         return {'FINISHED'}
 
 

@@ -1,5 +1,6 @@
 """Helpers shared by the operators."""
 
+from ..i18n import report as rpt
 from ..core import bonemap, calibrate
 
 
@@ -25,7 +26,7 @@ def calibration_stale(context, obj):
 def report(op, messages):
     """Report (level, text) messages; errors and warnings as warnings, the rest as info."""
     for level, text in messages:
-        op.report({'WARNING'} if level in {'ERROR', 'WARNING'} else {'INFO'}, text)
+        op.report({'WARNING'} if level in {'ERROR', 'WARNING'} else {'INFO'}, rpt(text))
 
 
 def tag_redraw(context):

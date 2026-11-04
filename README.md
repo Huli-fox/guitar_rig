@@ -286,6 +286,11 @@ The diagnostics describe the solve, not later Smooth or Re-clamp passes. Remove 
 
 ## For developers
 
+GuitarRig supports Blender's native translation system. To add or update a language,
+see [Translating GuitarRig](TRANSLATING.md). Catalogs live in `i18n/locales/`; missing
+translations fall back to English. The interface follows Blender's language and its
+interface, tooltip, and report translation preferences.
+
 Run the tests inside Blender from the add-on folder:
 
 ```
