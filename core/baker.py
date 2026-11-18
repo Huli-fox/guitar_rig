@@ -104,9 +104,9 @@ def chain_messages(rig, paths):
                      if con.name not in ours and not con.mute and con.influence > 0.0]
             if names:
                 messages.append(('WARNING', msg(
-                    '{name} has constraints ({value}) that act on top of the baked keys: the baked arm will '
+                    '{name} has constraints ({constraints}) that act on top of the baked keys: the baked arm will '
                     "differ from the solve. Mute them, or bake the rig's FK controls.",
-                    name=name, value=', '.join(names))))
+                    name=name, constraints=', '.join(names))))
             if _driven(obj, pbone.path_from_id()):
                 messages.append(('WARNING', msg('Drivers on {name} override its baked keys.', name=name)))
     return messages
@@ -527,47 +527,50 @@ class BakeJob(Job):
     def _report(self, keyed, error, error_frame, elapsed):
         stats, count = self.stats, len(self.frames)
         lines = [('INFO', msg(
-            'Baked frames {start}-{end} ({count} frames) in {elapsed:.1f} s ({value:.1f} frames/s): {keyed} arm '
+            'Baked frames {start}-{end} ({count} frames) in {elapsed:.1f} s ({rate:.1f} frames/s): {keyed} arm '
             'bones and the guitar.',
-            start=self.start, end=self.end, count=count, elapsed=elapsed, value=count / elapsed, keyed=keyed))]
-        parts = []
+            start=self.start, end=self.end, count=count, elapsed=elapsed, rate=count / elapsed, keyed=keyed))]
+        notes = []      # complete sentences: a translation cannot inflect a subject pasted into a shared one
         if stats.largest_frame is not None:
-            parts.append(msg(
-                'The largest wrist correction was {value:.1f} cm (frame {largest_frame})',
-                value=stats.largest * 100.0, largest_frame=stats.largest_frame))
-        for number, text in ((stats.collider, mark('the chest collider')), (stats.clamped, mark('the reach clamp')),
-                             (stats.aim_limited, mark('the Max Swing limit'))):
-            if number:
-                parts.append(msg('{text} acted on {number} frames', text=msg(text), number=number))
-        if parts:
-            lines.append(('INFO', join(parts, "; ") + "."))
+            notes.append(msg(
+                'The largest wrist correction was {distance:.1f} cm (frame {frame}).',
+                distance=stats.largest * 100.0, frame=stats.largest_frame))
+        if stats.collider:
+            notes.append(msg('The chest collider acted on {count} frames.', count=stats.collider))
+        if stats.clamped:
+            notes.append(msg('The reach clamp acted on {count} frames.', count=stats.clamped))
+        if stats.aim_limited:
+            notes.append(msg('The Max Swing limit acted on {count} frames.', count=stats.aim_limited))
+        if notes:
+            lines.append(('INFO', join(notes, " ")))
         runs = self.setup.schedule.runs(self.start, self.end)
         if len(runs) > 1 or runs[0][2].override != modes.SCENE:
             text = join(msg(
-                '{first}-{last} {value}',
-                first=first, last=last, value=msg(mode.mode.title())) + ("" if mode.override == modes.SCENE else "*")
+                '{first}-{last} {mode}',
+                first=first, last=last,
+                mode=modes.MODE_NAMES[mode.mode]) + ("" if mode.override == modes.SCENE else "*")
                              for first, last, mode in runs)
             lines.append(('INFO', msg(
-                'Modes: {text} (* range override). The filters restarted at the {value} changes, where the neck '
-                'aim fades over {FADE_FRAMES} frames.',
-                text=text, value=len(runs) - 1, FADE_FRAMES=modes.FADE_FRAMES)))
+                'Modes: {ranges} (* range override). The filters restarted at the {changes} changes, where the neck '
+                'aim fades over {fade_frames} frames.',
+                ranges=text, changes=len(runs) - 1, fade_frames=modes.FADE_FRAMES)))
         if stats.unconverged:
             lines.append(('INFO', msg(
-                'The neck aim did not settle on {unconverged_count} frames ({value}): raise Iterations or lower '
+                'The neck aim did not settle on {unconverged_count} frames ({frames}): raise Iterations or lower '
                 'Relax.',
-                unconverged_count=len(stats.unconverged), value=_fmt_frames(stats.unconverged))))
+                unconverged_count=len(stats.unconverged), frames=_fmt_frames(stats.unconverged))))
         if stats.misses:
             lines.append(('WARNING', msg(
-                'The IK missed its target on {misses_count} frames ({value}): check the arm bones for IK locks, '
+                'The IK missed its target on {misses_count} frames ({frames}): check the arm bones for IK locks, '
                 'limits or stretch.',
-                misses_count=len(stats.misses), value=_fmt_frames(stats.misses))))
+                misses_count=len(stats.misses), frames=_fmt_frames(stats.misses))))
         if error > VERIFY_TOLERANCE_M:
             lines.append(('WARNING', msg(
-                'Played back, the bake is {value:.1f} mm from the solve at frame {error_frame}: something acts on'
+                'Played back, the bake is {error:.1f} mm from the solve at frame {error_frame}: something acts on'
                 ' top of the keys (constraints, drivers, other NLA tracks above the bake).',
-                value=error * 1000.0, error_frame=error_frame)))
+                error=error * 1000.0, error_frame=error_frame)))
         else:
-            lines.append(('INFO', msg('Played back within {value:.2f} mm of the solve.', value=error * 1000.0)))
+            lines.append(('INFO', msg('Played back within {error:.2f} mm of the solve.', error=error * 1000.0)))
         return lines
 
 
@@ -736,19 +739,23 @@ class SmoothJob(Job):
             if role not in self.found:
                 continue
             owner, action = self.found[role]
-            correction = role == keys.ARM and settings.smooth_mode == 'CORRECTION'
+            arm = role == keys.ARM
+            correction = arm and settings.smooth_mode == 'CORRECTION'
             smoothed, skipped = smooth_action(action, owner, cutoff, fps, self._reference if correction else None)
-            name = "arm" if role == keys.ARM else "guitar"
-            text = (msg(
-                "Smoothed the solve's correction on {smoothed} {name} curves at {cutoff:g} Hz",
-                smoothed=smoothed, name=msg(name), cutoff=cutoff) if correction
-                    else msg(
-                        'Smoothed {smoothed} {name} curves at {cutoff:g} Hz',
-                        smoothed=smoothed, name=msg(name), cutoff=cutoff))
             if not filters.can_filter(cutoff, fps):
                 text = msg(
-                    'The {name} cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed',
-                    name=msg(name), cutoff=cutoff, fps=fps)
+                    'The arm cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed' if arm
+                    else 'The guitar cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed',
+                    cutoff=cutoff, fps=fps)
+            elif correction:
+                text = msg(
+                    "Smoothed the solve's correction on {smoothed} arm curves at {cutoff:g} Hz",
+                    smoothed=smoothed, cutoff=cutoff)
+            else:
+                text = msg(
+                    'Smoothed {smoothed} arm curves at {cutoff:g} Hz' if arm
+                    else 'Smoothed {smoothed} guitar curves at {cutoff:g} Hz',
+                    smoothed=smoothed, cutoff=cutoff)
             if skipped:
                 text += msg('. Skipped curves whose keys are not one per frame: {skipped}', skipped=skipped)
             lines.append(text + ".")
@@ -937,15 +944,15 @@ class ReclampJob(Job):
         frames = sorted({i for side in SIDES for i in self.solved[side]})
         if not frames:
             text = (msg(
-                'No frame of {value}-{value2} needed a re-clamp (tolerance {value3:.1f} mm).',
-                value=self.frames[0], value2=self.frames[-1], value3=self.tolerance * metres * 1000.0)) if self.frames else mark('No frames to re-clamp.')
+                'No frame of {first}-{last} needed a re-clamp (tolerance {tolerance:.1f} mm).',
+                first=self.frames[0], last=self.frames[-1], tolerance=self.tolerance * metres * 1000.0)) if self.frames else mark('No frames to re-clamp.')
             return [('INFO', text)]
         deepest, side, index = max((push, side, i) for side in SIDES for i, push in self.pushes[side].items())
         return [('INFO', msg(
-            'Re-clamped {frames_count} frames: the left hand on {value}, the right hand on {value2}. The deepest '
-            'was {value3:.1f} mm ({value4} hand, frame {value5}).',
-            frames_count=len(frames), value=counts['L'], value2=counts['R'], value3=deepest * metres * 1000.0,
-            value4=solver.SIDE_NAMES[side], value5=self.frames[index]))]
+            'Re-clamped {frames_count} frames: the left hand on {left_count}, the right hand on {right_count}. The '
+            'deepest was {depth:.1f} mm ({side} hand, frame {frame}).',
+            frames_count=len(frames), left_count=counts['L'], right_count=counts['R'], depth=deepest * metres * 1000.0,
+            side=solver.SIDE_NAMES[side], frame=self.frames[index]))]
 
 
 # Remove --------------------------------------------------------------------------------------------------------
@@ -971,7 +978,7 @@ def remove_bake(context):
     messages = [('INFO', msg('Removed the bake. Actions removed: {count}.', count=removed))]
     if kept:
         messages.append(('INFO', msg(
-            'Kept the refine actions with your keys ({value}) with a fake user.',
-            value=', '.join(kept))))
+            'Kept the refine actions with your keys ({names}) with a fake user.',
+            names=', '.join(kept))))
     settings.bake_report = calibrate.format_messages(messages)
     return messages

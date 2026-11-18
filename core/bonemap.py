@@ -257,9 +257,9 @@ def guess(arm_obj):
     messages = []
     if mapping["chest"] and rank.get("chest", 0) > 0:
         messages.append(('WARNING', msg(
-            "No humanoid chest bone found: the guitar will mount on '{value}'. Check Chest (Mount), and capture "
+            "No humanoid chest bone found: the guitar will mount on '{bone}'. Check Chest (Mount), and capture "
             'the mount again if you change it.',
-            value=mapping['chest'])))
+            bone=mapping['chest'])))
     messages += validate(bones, mapping)
     return Guess(mapping, ", ".join(sources) or "no match", messages)
 
@@ -343,8 +343,8 @@ def validate(bones, mapping):
             continue
         if name in used:
             messages.append(('WARNING', msg(
-                "'{name}' is used for both {value} and {title}.",
-                name=name, value=used[name], title=slot.title)))
+                "'{name}' is used for both {first_slot} and {second_slot}.",
+                name=name, first_slot=used[name], second_slot=slot.title)))
         else:
             used[name] = slot.title
     return messages

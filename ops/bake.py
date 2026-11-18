@@ -67,8 +67,8 @@ class _JobOperator:
             self._end(context)
             job.cancel(context)
             self.report({'WARNING'}, rpt(msg(
-                '{bl_label} cancelled at frame {frame}: nothing was changed.',
-                bl_label=msg(self.bl_label), frame=job.frame)))
+                '{operation} cancelled at frame {frame}: nothing was changed.',
+                operation=msg(self.bl_label), frame=job.frame)))
             return {'CANCELLED'}
         if event.type != 'TIMER':
             return {'RUNNING_MODAL'}        # the scene must not change under the job
@@ -84,8 +84,8 @@ class _JobOperator:
             self._end(context)
             job.cancel(context)
             self.report({'ERROR'}, rpt(msg(
-                '{bl_label} failed at frame {frame}: {exc}',
-                bl_label=msg(self.bl_label), frame=job.frame, exc=exc)))
+                '{operation} failed at frame {frame}: {error}',
+                operation=msg(self.bl_label), frame=job.frame, error=exc)))
             return {'CANCELLED'}
         context.window_manager.progress_update(job.progress * 100.0)
         self._status(context)
@@ -95,8 +95,8 @@ class _JobOperator:
         job = self._job
         if context.workspace is not None:
             context.workspace.status_text_set(iface(msg(
-                '{bl_label}: frame {frame} ({progress:.0%}). Esc to cancel.',
-                bl_label=msg(self.bl_label), frame=job.frame, progress=job.progress)))
+                '{operation}: frame {frame} ({progress:.0%}). Esc to cancel.',
+                operation=msg(self.bl_label), frame=job.frame, progress=job.progress)))
 
     def _end(self, context):
         wm = context.window_manager

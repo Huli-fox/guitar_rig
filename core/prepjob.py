@@ -132,8 +132,8 @@ def find_bones(obj):
         path = _path(bones, upper, hand) if upper and hand else None
         if path is None or forearm not in path:
             raise PrepError(msg(
-                "The {value} arm's bones are not mapped as a chain: check the bone map.",
-                value=solver.SIDE_NAMES[side]))
+                "The {side} arm's bones are not mapped as a chain: check the bone map.",
+                side=solver.SIDE_NAMES[side]))
         between = path[path.index(forearm) + 1:-1]
         named = mmd(side, TWIST_NAME)
         twist = named if named in between else (between[-1] if between else None)
@@ -156,17 +156,17 @@ def find_bones(obj):
         tips[side] = side_tips
     if not any(finger in fingers[FRET_SIDE] for finger in FRET_FINGERS):
         raise PrepError(msg(
-            '{NOT_MMD}: no MMD finger bones (人指１…) were found on the {value} hand.',
-            NOT_MMD=NOT_MMD, value=solver.SIDE_NAMES[FRET_SIDE]))
+            '{requirement}: no MMD finger bones (人指１…) were found on the {side} hand.',
+            requirement=NOT_MMD, side=solver.SIDE_NAMES[FRET_SIDE]))
     for side in SIDES:
         if arms[side].twist is None:
             messages.append(('WARNING', msg(
-                'No twist bone between the {value} forearm and hand: Roll is off there.',
-                value=solver.SIDE_NAMES[side])))
+                'No twist bone between the {side} forearm and hand: Roll is off there.',
+                side=solver.SIDE_NAMES[side])))
     if len(tips[PICK_SIDE]) < len(PICK_TIPS):
         messages.append(('WARNING', msg(
-            'The {value} thumb or index finger is missing: Swing is off.',
-            value=solver.SIDE_NAMES[PICK_SIDE])))
+            'The {side} thumb or index finger is missing: Swing is off.',
+            side=solver.SIDE_NAMES[PICK_SIDE])))
     return Bones(bone_map.chest, forearms, arms, fingers, tips, messages)
 
 
@@ -393,9 +393,9 @@ class PrepJob(baker.Job):
         count = len(range(self.start, self.end + 1))
         lines = [('INFO', msg(
             'Prepped frames {start}-{end} ({count} frames) in {elapsed:.1f} s: '
-            '{set_rotations____set_locations__count} bones keyed on the GuitarPrep layer.',
+            '{bones} bones keyed on the GuitarPrep layer.',
             start=self.start, end=self.end, count=count, elapsed=elapsed,
-            set_rotations____set_locations__count=len(set(rotations) | set(locations))))]
+            bones=len(set(rotations) | set(locations))))]
         lines += report + self.messages
         if keys.has_bake(obj):
             lines.append(('WARNING', msg("The bake still holds the arms solved from the mocap before this prep: bake "
@@ -469,9 +469,9 @@ class PrepJob(baker.Job):
         angle = math.degrees(math.acos(min(abs(prep.normalize(fixed) @ axis), 1.0)))
         if angle > 2.0:
             self.messages.append(('INFO', msg(
-                "The {value} twist bone's fixed axis is {angle:.0f}° off the forearm: Roll turns it about the "
+                "The {side} twist bone's fixed axis is {angle:.0f}° off the forearm: Roll turns it about the "
                 'forearm.',
-                value=solver.SIDE_NAMES[side], angle=angle)))
+                side=solver.SIDE_NAMES[side], angle=angle)))
 
     def _arm_keys(self, side, poses, rotations, locations):
         """Basis rotations (and locations, if they moved) of the arm bones whose pose changed."""
@@ -532,43 +532,43 @@ class PrepJob(baker.Job):
         before = prep.travel(_in_chest(chest, self.poses[arm.hand][keyed, :3, 3]), cutoff, fps)
         after = prep.travel(_in_chest(chest, poses[arm.hand][keyed, :3, 3]), cutoff, fps)
         text = (msg(
-            "The {name} wrist's travel above {cutoff:g} Hz: {value:.1f} → {value2:.1f} cm RMS (99th percentile "
-            '{value3:.1f} → {value4:.1f} cm)',
-            name=name, cutoff=cutoff, value=before[0] * cm, value2=after[0] * cm, value3=before[1] * cm,
-            value4=after[1] * cm))
+            "The {name} wrist's travel above {cutoff:g} Hz: {before:.1f} → {after:.1f} cm RMS (99th percentile "
+            '{peak_before:.1f} → {peak_after:.1f} cm)',
+            name=name, cutoff=cutoff, before=before[0] * cm, after=after[0] * cm, peak_before=before[1] * cm,
+            peak_after=after[1] * cm))
         if len(found.tips[PICK_SIDE]) == len(PICK_TIPS):
             pick_before = self._pick_points(self.poses)[keyed]
             pick_after = self._pick_points(poses)[keyed]
             b, a = prep.travel(_in_chest(chest, pick_before), cutoff, fps), prep.travel(_in_chest(chest, pick_after),
                                                                                          cutoff, fps)
             text += msg(
-                ". The pick point's travel: {value:.1f} → {value2:.1f} cm RMS",
-                value=b[0] * cm, value2=a[0] * cm)
+                ". The pick point's travel: {before:.1f} → {after:.1f} cm RMS",
+                before=b[0] * cm, after=a[0] * cm)
         lines.append(('INFO', text + "."))
         chest_q = _rotations(chest)
         hands = [prep.qmul(prep.qinv(chest_q), _rotations(p[arm.hand][keyed])) for p in (self.poses, poses)]
         rms = [math.degrees(prep.detail_rms(q, cutoff, fps)) for q in hands]
         speed = [math.degrees(np.percentile(prep.speeds(q, fps), 95)) if len(q) > 1 else 0.0 for q in hands]
         text = (msg(
-            "The {name} hand's turns above {cutoff:g} Hz: {value:.1f}° → {value2:.1f}° RMS, speed {value3:.0f} → "
-            '{value4:.0f}°/s (95th percentile)',
-            name=name, cutoff=cutoff, value=rms[0], value2=rms[1], value3=speed[0], value4=speed[1]))
+            "The {name} hand's turns above {cutoff:g} Hz: {before:.1f}° → {after:.1f}° RMS, speed "
+            '{speed_before:.0f} → {speed_after:.0f}°/s (95th percentile)',
+            name=name, cutoff=cutoff, before=rms[0], after=rms[1], speed_before=speed[0], speed_after=speed[1]))
         if "strokes" in stats:
-            text += msg('. Strokes snapped: {value}', value=stats['strokes']['moves'])
+            text += msg('. Strokes snapped: {moves}', moves=stats['strokes']['moves'])
         lines.append(('INFO', text + "."))
         swing = stats.get("swing")
         if swing is not None and len(swing["straight"]):
             lines.append(('INFO', msg(
-                'The {name} elbow was too straight to swing on {swing__straight___count} frames ({value}): only '
+                'The {name} elbow was too straight to swing on {count} frames ({frames}): only '
                 'the shoulder turned.',
-                name=name, swing__straight___count=len(swing['straight']),
-                value=baker._fmt_frames(list(swing['straight'])))))
+                name=name, count=len(swing['straight']),
+                frames=baker._fmt_frames(list(swing['straight'])))))
         for side, roll in stats.get("roll", {}).items():
             if len(roll):
                 lines.append(('INFO', msg(
-                    'Roll: the {value} twist bone turns {value2:.0f}° to {value3:.0f}° (1st to 99th percentile); '
+                    'Roll: the {side} twist bone turns {low:.0f}° to {high:.0f}° (1st to 99th percentile); '
                     'the hand keeps its pose.',
-                    value=solver.SIDE_NAMES[side], value2=np.percentile(roll, 1), value3=np.percentile(roll, 99))))
+                    side=solver.SIDE_NAMES[side], low=np.percentile(roll, 1), high=np.percentile(roll, 99))))
         fret = [(finger, joints) for finger, joints in found.fingers[FRET_SIDE].items()
                 if finger in FRET_FINGERS and joints[0] in finger_quats]
         if fret:
@@ -578,20 +578,20 @@ class PrepJob(baker.Job):
                     times[k] += prep.transitions(prep.bend([finger_quats[j][k][keyed] for j in joints]))
             if times[0]:
                 lines.append(('INFO', msg(
-                    "The {value} fingers' presses and releases: {value2:.0f} → {value3:.0f} frames from 10 % to "
-                    '90 % (median of {times_0__count}); {value4} moves snapped.',
-                    value=solver.SIDE_NAMES[FRET_SIDE], value2=np.median(times[0]), value3=np.median(times[1]),
-                    times_0__count=len(times[0]), value4=moves.get(FRET_SIDE, 0))))
+                    "The {side} fingers' presses and releases: {before:.0f} → {after:.0f} frames from 10 % to "
+                    '90 % (median of {count}); {moves} moves snapped.',
+                    side=solver.SIDE_NAMES[FRET_SIDE], before=np.median(times[0]), after=np.median(times[1]),
+                    count=len(times[0]), moves=moves.get(FRET_SIDE, 0))))
         if PICK_SIDE in moves:
             lines.append(('INFO', msg(
-                'The {name} fingers: {value} moves snapped.',
-                name=name, value=moves[PICK_SIDE])))
+                'The {name} fingers: {moves} moves snapped.',
+                name=name, moves=moves[PICK_SIDE])))
         hit = np.nonzero(clamped[keyed])[0] + self.start
         if len(hit):
             lines.append(('INFO', msg(
-                'The joint clamp held the {value} fingers on {hit_count} frames ({value2}).',
-                value=solver.SIDE_NAMES[FRET_SIDE], hit_count=len(hit),
-                value2=baker._fmt_frames([int(f) for f in hit]))))
+                'The joint clamp held the {side} fingers on {hit_count} frames ({frames}).',
+                side=solver.SIDE_NAMES[FRET_SIDE], hit_count=len(hit),
+                frames=baker._fmt_frames([int(f) for f in hit]))))
         return lines
 
 

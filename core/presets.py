@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from mathutils import Euler, Quaternion, Vector
 
-from ..i18n import msg
+from ..i18n import Message, msg
 from .guitar_frame import Measurements
 from .wrist import HAND_FRAME
 
@@ -137,12 +137,12 @@ def load(preset_id_or_path):
             data = json.load(f)
     except OSError as exc:
         raise PresetError(msg(
-            'Cannot read the preset {preset_id_or_path!r}: {value}.',
-            preset_id_or_path=preset_id_or_path, value=exc.strerror or exc)) from exc
+            'Cannot read the preset {preset!r}: {reason}.',
+            preset=preset_id_or_path, reason=exc.strerror or exc)) from exc
     except ValueError as exc:
         raise PresetError(msg(
-            'The preset {value} is not valid JSON: {exc}.',
-            value=os.path.basename(path), exc=exc)) from exc
+            'The preset {name} is not valid JSON: {reason}.',
+            name=os.path.basename(path), reason=exc)) from exc
     try:
         preset = parse(data, preset_id_or_path)
         if os.path.dirname(os.path.abspath(path)) == os.path.abspath(PRESET_DIR):
@@ -151,9 +151,11 @@ def load(preset_id_or_path):
             preset.notes = [msg(note) for note in preset.notes]
         return preset
     except (KeyError, TypeError, ValueError, IndexError) as exc:
+        # A message explains itself and stays translatable; KeyError('key') needs its type to make sense.
+        detail = exc.args[0] if exc.args and isinstance(exc.args[0], Message) else repr(exc)
         raise PresetError(msg(
-            'The preset {value} is malformed: {exc!r}.',
-            value=os.path.basename(path), exc=exc)) from exc
+            'The preset {name} is malformed: {detail}.',
+            name=os.path.basename(path), detail=detail)) from exc
 
 
 def _unit(data):
@@ -178,8 +180,8 @@ def parse(data, preset_id=""):
     version = data.get("format", FORMAT)
     if version > FORMAT:
         raise ValueError(msg(
-            'format {value} is newer than this add-on reads ({FORMAT})',
-            value=data['format'], FORMAT=FORMAT))
+            'format {format} is newer than this add-on reads ({supported})',
+            format=data['format'], supported=FORMAT))
     unit = _unit(data)
     frame = Quaternion(data.get("frame", (1.0, 0.0, 0.0, 0.0))).normalized()
     landmarks = {}
@@ -321,8 +323,8 @@ def store_magnets(collection, specs, landmark_objects, fitted):
                 obj = landmark_objects.get(value)
                 if obj is None:
                     messages.append(('WARNING', msg(
-                        'Magnet {name}: there is no {value} landmark.',
-                        name=name, value=value)))
+                        'Magnet {name}: there is no {landmark} landmark.',
+                        name=name, landmark=value)))
                 setattr(item, "landmark_" + key, obj)
             elif key == "fingers":
                 item.fingers = set(value)

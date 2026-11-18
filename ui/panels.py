@@ -19,6 +19,7 @@ CONFIDENCE_ICONS = {'HIGH': 'CHECKMARK', 'MEDIUM': 'INFO', 'LOW': 'ERROR'}
 MOUNT_TEXT = {'NONE': "Not set", 'PRESET': "Preset estimate", 'CAPTURE': "Captured"}
 WRIST_TEXT = {'DEFAULT': "SAO default", 'PRESET': "Preset", 'CAPTURE': "Captured"}
 LANDMARK_TEXT = {'PRESET': "Placed by the preset fit", 'AUTO': "Auto-placed"}
+CONFIDENCE_TEXT = {'HIGH': mark("High"), 'MEDIUM': mark("Medium"), 'LOW': mark("Low")}
 
 
 def draw_messages(layout, context, messages):
@@ -109,13 +110,13 @@ class GTR_PT_guitar(bpy.types.Panel):
         row.operator("gtr.flip_frame", text="Flip Z", text_ctxt=CONTEXT).axis = 'Z'
         rows = [(mark('Length'), msg(
             '{length_m:.3f} m',
-            length_m=info.length_m)), ("Confidence", info.confidence.title())]
+            length_m=info.length_m)), (mark("Confidence"), CONFIDENCE_TEXT[info.confidence])]
         if info.preset:
             scale = info.fit_scale
-            rows.append(("Fit", msg(
-                '{value}  ×{value2:.2f} ×{value3:.2f} ×{value4:.2f}',
-                value=msg('Neck') if info.fit_method == 'NECK' else msg('Bounds'), value2=scale[0], value3=scale[1],
-                value4=scale[2])))
+            rows.append((mark("Fit"), msg(
+                '{method}  ×{length:.2f} ×{width:.2f} ×{depth:.2f}',
+                method=msg('Neck') if info.fit_method == 'NECK' else msg('Bounds'), length=scale[0], width=scale[1],
+                depth=scale[2])))
         frame = root.matrix_world.to_quaternion()
         for i, name in enumerate(GUITAR_AXIS_NAMES):
             axis = frame @ Vector([float(j == i) for j in range(3)])
@@ -216,8 +217,8 @@ class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
         tips = list(cal.fingertips)
         estimated = sum(1 for tip in tips if tip.source == 'ESTIMATE')
         tip_text = msg(
-            'L {value}, R {value2}',
-            value=sum((t.side == 'L' for t in tips)), value2=sum((t.side == 'R' for t in tips)))
+            'L {left}, R {right}',
+            left=sum((t.side == 'L' for t in tips)), right=sum((t.side == 'R' for t in tips)))
         if estimated:
             tip_text = msg("L {left}, R {right} ({estimated} estimated)", left=sum(t.side == 'L' for t in tips),
                            right=sum(t.side == 'R' for t in tips), estimated=estimated)
@@ -231,9 +232,9 @@ class GTR_PT_calibration(_SubPanel, bpy.types.Panel):
                 '{spine_len:.3f} m  ×{ratio_spine:.3f}',
                 spine_len=cal.spine_len, ratio_spine=cal.ratio_spine)),
             (mark('IK chain L / R'), msg(
-                '{chain_len_L:.3f} / {chain_len_R:.3f} m',
-                chain_len_L=cal.chain_len_L, chain_len_R=cal.chain_len_R)),
-            ("Fingertips", tip_text),
+                '{left:.3f} / {right:.3f} m',
+                left=cal.chain_len_L, right=cal.chain_len_R)),
+            (mark("Fingertips"), tip_text),
         ]
         frame = calibrate.char_frame_world(Quaternion(cal.char_frame), obj.matrix_world)
         for i, name in enumerate(AXIS_NAMES):
@@ -330,10 +331,10 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
             text = msg("Preset estimate ({preset})", preset=settings.mount_preset)
         elif source == 'CAPTURE':
             text = msg("Captured at frame {frame}", frame=settings.mount_frame)
-        rows = [("Mount", text)]
+        rows = [(mark("Mount"), text)]
         if source != 'NONE':
             euler = Quaternion(settings.mount_q).to_euler('XYZ')
-            rows.append(("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler)))
+            rows.append((mark("Rotation"), "  ".join(f"{math.degrees(a):.1f}°" for a in euler)))
         draw_rows(layout, rows, factor=0.3)
         if source != 'NONE':
             layout.prop(settings, "mount_t", text="", text_ctxt=CONTEXT)
@@ -367,8 +368,8 @@ class GTR_PT_mount(_SubPanel, bpy.types.Panel):
             if settings.wrist_source == 'CAPTURE':
                 text = msg("Captured at frame {frame}", frame=settings.wrist_frame)
             euler = Quaternion(settings.wrist_offset).to_euler('XYZ')
-            draw_rows(body, [(mark('Offset'), text), ("Rotation", "  ".join(f"{math.degrees(a):.1f}°" for a in euler))],
-                      factor=0.3)
+            draw_rows(body, [(mark('Offset'), text),
+                             (mark("Rotation"), "  ".join(f"{math.degrees(a):.1f}°" for a in euler))], factor=0.3)
             col = body.column()
             col.prop(settings, "wrist_blend")
             col.prop(settings, "wrist_direction")
@@ -417,10 +418,10 @@ def draw_magnet(layout, context, settings, item, index):
     result = solver.shown_result(context.scene)
     hit = result.hit(index) if result is not None else None
     if hit is not None:
-        state = "clamp" if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)
-        rows.append(("Solve", msg(
-            '{value:.1f} cm away, {state}',
-            value=hit.distance * result.metres_per_bu * 100.0, state=state)))
+        state = msg("clamp") if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)
+        rows.append((mark("Solve"), msg(
+            '{distance:.1f} cm away, {state}',
+            distance=hit.distance * result.metres_per_bu * 100.0, state=state)))
     if rows:
         draw_rows(box, rows, factor=0.3)
     if item.filter != 'NONE':
@@ -521,10 +522,10 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
             col.operator("gtr.range_add", text="", icon='ADD', text_ctxt=CONTEXT)
             col.operator("gtr.range_remove", text="", icon='REMOVE', text_ctxt=CONTEXT)
             frame_mode = modes.Schedule(settings).at(scene.frame_current)
-            text = msg('Frame {frame}: {mode}', frame=scene.frame_current, mode=msg(frame_mode.mode.title()))
+            text = msg('Frame {frame}: {mode}', frame=scene.frame_current, mode=modes.MODE_NAMES[frame_mode.mode])
             if frame_mode.override != modes.SCENE:
                 text = msg('Frame {frame}: {mode} (range {range_number})', frame=scene.frame_current,
-                           mode=msg(frame_mode.mode.title()), range_number=frame_mode.override + 1)
+                           mode=modes.MODE_NAMES[frame_mode.mode], range_number=frame_mode.override + 1)
             if 0.0 < frame_mode.aim_weight < settings.aim_weight:
                 text = msg('{status}, neck aim fading ({weight:.2f})', status=text, weight=frame_mode.aim_weight)
             body.label(text=iface(text), translate=False)
@@ -533,8 +534,8 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
             draw_messages(body, context, [('INFO', msg(
                 'Each range solves its frames in its mode: the neck aim and the fretboard-edge magnet switch as '
                 'with the mode buttons. Lower ranges win where they overlap. The neck aim fades over '
-                '{FADE_FRAMES} frames at each change.',
-                FADE_FRAMES=modes.FADE_FRAMES))])
+                '{fade_frames} frames at each change.',
+                fade_frames=modes.FADE_FRAMES))])
         header, body = layout.panel("GTR_solve_options", default_closed=True)
         header.label(text="Options", text_ctxt=CONTEXT)
         if body is not None:
@@ -558,10 +559,10 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
             rows = []
             frame_mode = result.frame_mode
             if frame_mode is not None and (frame_mode.override != modes.SCENE or len(settings.range_overrides)):
-                text = msg(frame_mode.mode.title())
+                text = modes.MODE_NAMES[frame_mode.mode]
                 if frame_mode.override != modes.SCENE:
                     text = msg('{mode} (range {range_number})', mode=text, range_number=frame_mode.override + 1)
-                rows.append(("Mode", text))
+                rows.append((mark("Mode"), text))
             for side in SIDES:
                 side_result = result.sides[side]
                 moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
@@ -571,12 +572,12 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
                 if side_result.passthrough is not None:
                     rows.append((mark('   pass-through'),
                                  msg(
-                                     '{value:.1f} cm',
-                                     value=side_result.passthrough.length * result.metres_per_bu * 100.0)))
+                                     '{distance:.1f} cm',
+                                     distance=side_result.passthrough.length * result.metres_per_bu * 100.0)))
                 for index, hit in side_result.hits:
                     if hit.weight > 0.0 and index < len(settings.magnets):
                         rows.append((msg("   {name}", name=settings.magnets[index].name),
-                                     "clamp" if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)))
+                                     msg("clamp") if hit.barrier else msg('weight {weight:.2f}', weight=hit.weight)))
             if result.neck is not None:
                 rows.append((mark('Neck swing'), msg("{angle:.1f}°, limited", angle=math.degrees(result.swing))
                              if result.neck.clamped else f"{math.degrees(result.swing):.1f}°"))

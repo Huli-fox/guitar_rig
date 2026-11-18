@@ -261,9 +261,9 @@ def build(context, settings):
         others = _other_ik(obj, chain)
         if others:
             messages.append(('WARNING', msg(
-                'The {value} arm has its own IK ({value2}): mute it while you solve, or the pole target is '
+                'The {side} arm has its own IK ({constraints}): mute it while you solve, or the pole target is '
                 'ignored.',
-                value=SIDE_NAMES[side], value2=', '.join(others))))
+                side=SIDE_NAMES[side], constraints=', '.join(others))))
         helpers[f"IKT_{side}"][CHAIN_PROP] = chain.key
 
         forearm = obj.pose.bones[chain.forearm]

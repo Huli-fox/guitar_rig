@@ -134,5 +134,21 @@ The extractor combines explicit `msg()`/`mark()` calls, layout text, registered 
 generated bone/landmark metadata, and bundled preset text. Mark standalone display
 constants with `mark('English text')`; it is an identity function used by extraction.
 For new generated metadata, extend `tools/i18n.py:collect()` and its coverage test.
+
+The extractor reads literal text only, so `msg(name)` contributes nothing to the
+catalog and `name` would stay English in every language. `check` rejects such calls
+unless `DYNAMIC` in `tools/i18n.py` lists them, next to the place their texts are
+extracted from. Prefer a literal, or one complete template per case:
+
+```python
+msg('Smoothed {count} arm curves' if arm else 'Smoothed {count} guitar curves', count=count)
+```
+
+Name placeholders for what they hold (`{frame}`, `{distance}`, `{side}`), since the
+name is all a translator sees of the value. A placeholder name is part of the catalog
+key: renaming one later orphans every existing translation of that message.
+
 Always regenerate the template after changing messages. No application code changes
-are needed to add a locale file, and extension builds include locale catalogs.
+are needed to add a locale file. Extension builds include the locale catalogs but not
+`_template.py`, which is only a starting point for contributors. A locale file that
+cannot be read is skipped with a console message when the add-on is enabled.

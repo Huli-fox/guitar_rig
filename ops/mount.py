@@ -109,8 +109,8 @@ class GTR_OT_capture_mount(bpy.types.Operator):
             self.report({'WARNING'}, rpt("The rig or bone map changed since calibration: calibrate again, then capture "
                                      "the mount again."))
         self.report({'INFO'}, rpt(msg(
-            'Mount captured at frame {mount_frame}: the guitar origin is {value:.1f} cm from the chest bone.',
-            mount_frame=settings.mount_frame, value=mount_t.length * 100.0)))
+            'Mount captured at frame {mount_frame}: the guitar origin is {distance:.1f} cm from the chest bone.',
+            mount_frame=settings.mount_frame, distance=mount_t.length * 100.0)))
         tag_redraw(context)
         return {'FINISHED'}
 

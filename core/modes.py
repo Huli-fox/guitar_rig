@@ -14,9 +14,11 @@ so Solve Frame shows the frame as a bake solves it.
 
 from dataclasses import dataclass
 
+from ..i18n import msg
 from .magnets import MODE_PRESETS
 
 FADE_FRAMES = 5
+MODE_NAMES = {'FOLLOW': msg("Follow"), 'ALIGN': msg("Align")}
 SCENE = -1                  # the run key of frames without an override
 
 

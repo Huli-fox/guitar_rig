@@ -21,5 +21,6 @@ paths_exclude_pattern = [
   "/.tmp/",
   "/tests/",
   "/tools/",
+  "/i18n/locales/_template.py",
   "*.zip",
 ]

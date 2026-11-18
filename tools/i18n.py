@@ -13,6 +13,47 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 CONTEXT = "GuitarRig"
 LOCALES = ROOT / "i18n" / "locales"
+FOLDERS = ("core", "ops", "rig", "ui", "i18n")
+# msg() calls whose text is not a literal. The extractor cannot read them, so each is listed with the place its
+# texts reach the catalog from. `check` rejects any other: its text would stay English in every language.
+DYNAMIC = {
+    "core/autoland.py": {"landmarks.ROLE_BY_ID[role].label"},           # landmarks.ROLES
+    "core/bonemap.py": {"f'{side}{chain}{self.label}'", "part"},        # bonemap.SLOTS; mark() and conventions
+    "core/guitar_frame.py": {"cue"},                                    # guitar_frame.CUE_TITLES
+    "core/presets.py": {"preset.name", "preset.description", "note"},   # the bundled preset files
+    "i18n/messages.py": {"value['message']"},                           # templates of a stored report
+    "ops/bake.py": {"self.bl_label", "name", "text", "diagnostics.METRIC_BY_ID[self.metric][1]"},  # RNA; METRICS
+    "ops/guitar.py": {"role.label"},                                    # landmarks.ROLES
+    "ui/panels.py": {"role.label", "diagnostics.METRIC_BY_ID[metric][1]"},
+}
+
+
+def calls():
+    """(relative path, call node, called name) of every call in the translated sources."""
+    for folder in FOLDERS:
+        for path in sorted((ROOT / folder).glob("*.py")):
+            rel = path.relative_to(ROOT).as_posix()
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Call):
+                    yield rel, node, node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+
+
+def is_literal(node):
+    if isinstance(node, ast.IfExp):
+        return is_literal(node.body) and is_literal(node.orelse)
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def unlisted(found=None):
+    """Errors for the msg()/mark() calls that the extractor cannot read and DYNAMIC does not account for."""
+    errors = []
+    for rel, node, name in calls() if found is None else found:
+        if name in {"msg", "mark"} and node.args and not is_literal(node.args[0]):
+            source = ast.unparse(node.args[0])
+            if source not in DYNAMIC.get(rel, ()):
+                errors.append(f"{rel}:{node.lineno}: {name}({source}) is not a literal, so its text is not "
+                              "extracted; mark() the text where it is written and list the call in DYNAMIC")
+    return errors
 
 
 def literals(node):
@@ -31,22 +72,16 @@ def collect(addon):
         if text:
             entries[(context, str(text))].add(reference)
 
-    for folder in ("core", "ops", "rig", "ui", "i18n"):
-        for path in sorted((ROOT / folder).glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                reference = f"{path.relative_to(ROOT).as_posix()}:{getattr(node, 'lineno', 1)}"
-                if not isinstance(node, ast.Call):
-                    continue
-                name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
-                if name in {"msg", "mark", "iface", "tip", "rpt"} and node.args:
-                    for text in literals(node.args[0]):
+    for rel, node, name in calls():
+        reference = f"{rel}:{node.lineno}"
+        if name in {"msg", "mark", "iface", "tip", "rpt"} and node.args:
+            for text in literals(node.args[0]):
+                add(text, reference)
+        if name in {"label", "operator", "prop", "prop_search"}:
+            for kw in node.keywords:
+                if kw.arg == "text":
+                    for text in literals(kw.value):
                         add(text, reference)
-                if name in {"label", "operator", "prop", "prop_search"}:
-                    for kw in node.keywords:
-                        if kw.arg == "text":
-                            for text in literals(kw.value):
-                                add(text, reference)
 
     classes = list(addon.props.CLASSES) + list(addon.ui.panels.CLASSES)
     for module in addon.ops._MODULES:
@@ -145,7 +180,7 @@ def write_catalog(path, entries, previous):
 
 def check(entries, read_catalog):
     import bpy
-    errors = []
+    errors = unlisted()
     supported = {item.identifier for item in bpy.context.preferences.view.bl_rna.properties['language'].enum_items}
     template_path = LOCALES / "_template.py"
     if not template_path.exists():

@@ -371,22 +371,22 @@ def summary(result, items):
         side_result = result.sides[side]
         moved = (side_result.target - side_result.fk_wrist).length * result.metres_per_bu * 100.0
         acting = [msg(
-            '{name} {value}',
-            name=items[i].name, value=msg('clamp') if hit.barrier else format(hit.weight, '.2f'))
+            '{name} {state}',
+            name=items[i].name, state=msg('clamp') if hit.barrier else format(hit.weight, '.2f'))
                   for i, hit in side_result.hits if hit.weight > 0.0 and i < len(items)]
         contact = side_result.collider
         if contact is not None and contact.weight > 0.0:
             acting.insert(0, msg(
-                'chest collider {value:.1f} cm',
-                value=contact.moved.length * result.metres_per_bu * 100.0))
-        text = msg('{value} wrist moved {moved:.1f} cm', value=SIDE_NAMES[side], moved=moved)
-        parts.append(text + (msg(' ({value})', value=join(acting)) if acting else ""))
+                'chest collider {distance:.1f} cm',
+                distance=contact.moved.length * result.metres_per_bu * 100.0))
+        text = msg('{side} wrist moved {moved:.1f} cm', side=SIDE_NAMES[side], moved=moved)
+        parts.append(text + (msg(' ({causes})', causes=join(acting)) if acting else ""))
     if result.neck is not None:
-        parts.append(msg('neck swung {value:.1f}°', value=math.degrees(result.swing)))
+        parts.append(msg('neck swung {angle:.1f}°', angle=math.degrees(result.swing)))
     if result.wrist_turn > 0.0:
         parts.append(msg(
-            '{value} wrist turned {value2:.1f}°',
-            value=SIDE_NAMES[FRET_SIDE], value2=math.degrees(result.wrist_turn)))
+            '{side} wrist turned {angle:.1f}°',
+            side=SIDE_NAMES[FRET_SIDE], angle=math.degrees(result.wrist_turn)))
     return msg('Frame {frame}: {summary}.', frame=result.frame, summary=join(parts, '; '))
 
 
@@ -715,18 +715,18 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 name=name, reach_clamp=settings.reach_clamp)))
         if side_result.error >= tolerance:
             messages.append(('WARNING', msg(
-                'The {name} IK misses its target by {value:.1f} mm: check the arm bones for IK locks, limits or '
+                'The {name} IK misses its target by {error:.1f} mm: check the arm bones for IK locks, limits or '
                 'stretch.',
-                name=name, value=side_result.error * cal.metres_per_bu * 1000.0)))
+                name=name, error=side_result.error * cal.metres_per_bu * 1000.0)))
     if aimed is not None and aimed.clamped:
         messages.append(('INFO', msg(
-            'The neck aim was limited to {value:.0f}° (Max Swing): the fretting hand is far from the neck.',
-            value=math.degrees(settings.aim_max_swing))))
+            'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting hand is far from the neck.',
+            limit=math.degrees(settings.aim_max_swing))))
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
         messages.append(('INFO', msg(
-            'The neck aim had not settled after {value} iterations: raise Iterations, or lower Relax if the '
+            'The neck aim had not settled after {count} iterations: raise Iterations, or lower Relax if the '
             'guitar oscillates.',
-            value=count - 1)))
+            count=count - 1)))
     return FrameResult(scene.frame_current, settings.solve_serial, frame_mode.mode, guitar, sides, count, converged,
                        cal.metres_per_bu, messages, aimed, rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand),
                        constrained, frame_mode)
@@ -787,7 +787,7 @@ def check_messages(errors):
     for side, (elbow, hand) in errors.items():
         if max(elbow, hand) > CHECK_TOLERANCE_M:
             messages.append(('WARNING', msg(
-                'The {value} IK does not reproduce the current pose: the elbow is {value2:.1f} mm and the wrist '
-                '{value3:.1f} mm off. Check the arm bones for IK locks, limits or stretch.',
-                value=SIDE_NAMES[side], value2=elbow * 1000.0, value3=hand * 1000.0)))
+                'The {side} IK does not reproduce the current pose: the elbow is {elbow:.1f} mm and the wrist '
+                '{wrist:.1f} mm off. Check the arm bones for IK locks, limits or stretch.',
+                side=SIDE_NAMES[side], elbow=elbow * 1000.0, wrist=hand * 1000.0)))
     return messages

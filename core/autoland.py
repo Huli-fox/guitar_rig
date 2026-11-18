@@ -161,10 +161,10 @@ def place(preset, target, metres=1.0, frame_confidence='HIGH'):
     cm = metres * 100.0
     neck = tgt.neck
     text = (msg(
-        'Neck {value:.0f} cm from the {value2} to the nut, {value3:.1f} cm wide at the nut; fretboard tilted '
-        '{value4:+.1f}°.',
-        value=neck_tgt * cm, value2=msg('heel') if use_heel else msg('body'), value3=neck.width_at(neck.nut_x) * cm,
-        value4=math.degrees(math.atan(neck.fret_slope))))
+        'Neck {length:.0f} cm from the {start} to the nut, {width:.1f} cm wide at the nut; fretboard tilted '
+        '{tilt:+.1f}°.',
+        length=neck_tgt * cm, start=msg('heel') if use_heel else msg('body'), width=neck.width_at(neck.nut_x) * cm,
+        tilt=math.degrees(math.atan(neck.fret_slope))))
     if heel_found:
         past = (neck.joint_x - neck.heel_x) * cm
         if past > HEEL_NOTE_CM:
@@ -172,7 +172,7 @@ def place(preset, target, metres=1.0, frame_confidence='HIGH'):
                 ' The body starts under the neck {past:.1f} cm past where the neck narrows (cutaways).',
                 past=past)
         elif past < -HEEL_NOTE_CM:
-            text += msg(' The heel reaches {value:.1f} cm up the neck from where it narrows.', value=-past)
+            text += msg(' The heel reaches {length:.1f} cm up the neck from where it narrows.', length=-past)
     messages.insert(0, ('INFO', text))
     extent = (float(target.bounds_min[0]), float(target.bounds_max[0]))
     for role in ("STRUM_A", "STRUM_B"):

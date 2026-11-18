@@ -241,9 +241,9 @@ class GTR_OT_normalize_frame(bpy.types.Operator):
         report(self, detection.messages + fitted.messages)
         length = root.gtr_guitar.length_m
         self.report({'INFO'}, rpt(msg(
-            'Guitar frame found ({value} confidence); the guitar is {length:.2f} m long. Check the axes, then '
+            'Guitar frame found ({confidence} confidence); the guitar is {length:.2f} m long. Check the axes, then '
             'load a preset.',
-            value=guitar_frame.CONFIDENCE_TEXT[detection.confidence], length=length)))
+            confidence=guitar_frame.CONFIDENCE_TEXT[detection.confidence], length=length)))
         if not 0.4 <= length <= 1.6:
             self.report({'WARNING'}, rpt(msg(
                 'The guitar is {length:.2f} m long: use Real Length to scale it to real size.',
@@ -340,10 +340,10 @@ def apply_preset(op, context, preset, magnets=True, mount=True, aim_wrist=True):
     report(op, messages)
     scale = root.gtr_guitar.fit_scale
     op.report({'INFO'}, rpt(msg(
-        'Loaded {name}: fitted to the {value} (×{value2:.2f} long, ×{value3:.2f} wide, ×{value4:.2f} deep). Check'
+        'Loaded {name}: fitted to the {method} (×{length:.2f} long, ×{width:.2f} wide, ×{depth:.2f} deep). Check'
         ' the landmarks.',
-        name=preset.name, value=msg('neck') if fitted.method == 'NECK' else msg('bounds'), value2=scale[0],
-        value3=scale[1], value4=scale[2])))
+        name=preset.name, method=msg('neck') if fitted.method == 'NECK' else msg('bounds'), length=scale[0],
+        width=scale[1], depth=scale[2])))
     tag_redraw(context)
 
 
@@ -463,7 +463,7 @@ class GTR_OT_save_preset(bpy.types.Operator, ExportHelper):
             with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(presets.dumps(presets.rounded(data)))
         except OSError as exc:
-            self.report({'ERROR'}, rpt(msg('Cannot write {path}: {value}.', path=path, value=exc.strerror or exc)))
+            self.report({'ERROR'}, rpt(msg('Cannot write {path}: {reason}.', path=path, reason=exc.strerror or exc)))
             return {'CANCELLED'}
         self.report({'INFO'}, rpt(msg('Saved the preset to {path}.', path=path)))
         return {'FINISHED'}
@@ -548,10 +548,10 @@ class GTR_OT_auto_landmarks(bpy.types.Operator):
         info.landmark_messages = calibrate.format_messages(messages)
         report(self, messages)
         self.report({'INFO'}, rpt(msg(
-            "Auto-placed {landmarks_count} landmarks with the {name} preset's conventions ({value} confidence). "
+            "Auto-placed {landmarks_count} landmarks with the {name} preset's conventions ({confidence} confidence). "
             'Check them.',
             landmarks_count=len(placement.landmarks), name=preset.name,
-            value=guitar_frame.CONFIDENCE_TEXT[placement.confidence])))
+            confidence=guitar_frame.CONFIDENCE_TEXT[placement.confidence])))
         tag_redraw(context)
         return {'FINISHED'}
 

@@ -46,16 +46,27 @@ def read_catalog(path):
     return result
 
 
-def register():
-    import bpy
-    global _owner
-    owner = __package__.rsplit(".", 1)[0]
+def load_catalogs():
+    """{locale: {key: translation}} of the locale files that read cleanly."""
     catalogs = {}
     for path in sorted(CATALOG_DIR.glob("*.py")):
         if path.name.startswith("_"):
             continue
-        catalogs[path.stem] = {key: value for key, value in read_catalog(path).items() if value}
-    bpy.app.translations.register(owner, catalogs)
+        try:
+            catalog = read_catalog(path)
+        except (OSError, SyntaxError, ValueError, TypeError, RecursionError) as exc:
+            # A broken community translation costs that language, never the add-on.
+            print(f"GuitarRig: skipped the translation {path.name}: {exc}")
+            continue
+        catalogs[path.stem] = {key: value for key, value in catalog.items() if value}
+    return catalogs
+
+
+def register():
+    import bpy
+    global _owner
+    owner = __package__.rsplit(".", 1)[0]
+    bpy.app.translations.register(owner, load_catalogs())
     _owner = owner
 
 
