@@ -129,3 +129,39 @@ class DiagnosticsBakeTest(BakeTest):
         self.assertIn("No frame has any Chest Collider", draw())
         self.assertEqual(bpy.ops.gtr.show_diagnostics(), {'FINISHED'})
         self.assertIs(bpy.context.view_layer.objects.active, diagnostics.find(self.settings))
+
+
+class NeckContactDiagnosticsTest(BakeTest):
+    curves = DiagnosticsBakeTest.curves
+
+    def test_curves_and_ranking(self):
+        frames = range(1, 7)
+        animate(self.obj, self.root, frames=frames)
+        plain(self.settings)
+        self.settings.aim_max_swing = np.radians(8.0)
+        self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
+        curves = self.curves()
+        moved, gaps = curves["neck contact (cm)"][1], curves["neck gap (cm)"][1]
+        self.assertGreater(moved.max(), 1.0)
+        self.assertEqual(moved.min(), 0.0)
+        for i, frame in enumerate(frames):
+            self.scene.frame_set(frame)
+            result = solver.solve(bpy.context, self.rig)
+            build.deactivate(self.settings)
+            cm = 100.0 * result.metres_per_bu
+            contact = result.neck_contact
+            self.assertAlmostEqual(moved[i], 0.0 if contact is None else contact.moved.length * cm, places=3)
+            self.assertAlmostEqual(gaps[i], result.neck_gap * cm, places=3)
+        ranked = diagnostics.ranking(diagnostics.find(self.settings), 'NECK_CONTACT')
+        self.assertEqual(ranked[0][0], frames[int(moved.argmax())])
+        self.assertAlmostEqual(ranked[0][1], moved.max(), places=4)
+
+    def test_scores(self):
+        frames = np.array((1.0, 2.0, 3.0))
+        curves = {
+            "neck contact (cm)": ({"kind": 'NECK_CONTACT', "side": "", "barrier": 0}, np.array((0.0, 5.0, 2.0))),
+            "neck gap (cm)": ({"kind": 'NECK_GAP', "side": "", "barrier": 0}, np.array((9.0, 0.3, 1.5))),
+        }
+        np.testing.assert_allclose(diagnostics.scores(frames, curves, 'NECK_CONTACT'), (0.0, 5.0, 2.0))
+        np.testing.assert_allclose(diagnostics.scores(frames, curves, 'NECK_GAP'), (0.0, 0.3, 1.5))    # where it moved
+        self.assertEqual(diagnostics.format_value('NECK_GAP', 1.26), "1.3 cm")

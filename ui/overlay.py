@@ -13,9 +13,10 @@ a normal, barrier planes crossed. The active magnet also shows its reach D on th
 around a line, a bar along the normal of a plane. While the rig shows a solve, a white line runs from each FK
 wrist to its target, and each magnet that saw the hand draws its pull, from grey (weight 0) to full colour
 (weight 1), red for a barrier clamp, with the weights as text, and in FOLLOW a magenta line runs from the neck
-pivot to the aim point the neck was swung toward. The chest collider, when on, is drawn as its capsule (two
-rings and four lines, pale yellow); in a shown solve, a yellow line marks how far it pushed a wrist. The geometry
-is built without the gpu module, so tests can check it in background mode.
+pivot to the aim point the neck was swung toward; where Max Swing limited the swing and the fretting wrist moved
+to the neck instead (the solver's neck contact), another magenta line marks that move. The chest collider, when
+on, is drawn as its capsule (two rings and four lines, pale yellow); in a shown solve, a yellow line marks how
+far it pushed a wrist. The geometry is built without the gpu module, so tests can check it in background mode.
 """
 
 import math
@@ -237,6 +238,9 @@ def _magnets(geo, context, settings, unit):
     if result.neck is not None:
         geo.line(result.neck.axis_origin, result.neck.target, AIM_COLOR)
         geo.dot(result.neck.axis_origin, AIM_COLOR)
+    if result.neck_contact is not None:
+        target = result.sides[solver.FRET_SIDE].target
+        geo.line(target - result.neck_contact.moved, target, AIM_COLOR)
     for side, side_result in result.sides.items():
         geo.line(side_result.fk_wrist, side_result.target, WRIST_COLOR)
         geo.dot(side_result.fk_wrist, IDLE_COLOR)
@@ -306,6 +310,12 @@ def build_labels(context):
             labels.append((side_result.target, line, msg(
                 'Chest collider: {moved:.1f} cm',
                 moved=moved), CONTACT_COLOR))
+            line += 1
+        if side == solver.FRET_SIDE and result.neck_contact is not None:
+            moved = result.neck_contact.moved.length * result.metres_per_bu * 100.0
+            labels.append((side_result.target, line, msg(
+                'Neck contact: {moved:.1f} cm',
+                moved=moved), AIM_COLOR))
             line += 1
         for index, hit in side_result.hits:
             if hit.weight <= 0.0 or index >= len(settings.magnets):

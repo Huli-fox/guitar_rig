@@ -250,21 +250,29 @@ def is_barrier(entry):
     return entry.feature.kind == 'PLANE' and not entry.params.crossable
 
 
-def clamp_out(wrist, entry):
-    """(wrist, push) with the wrist pushed along a barrier's normal just far enough that its hand point is not
-    behind the plane and, with fingertips, that the lowest one is at least the fingertip margin above it (the
-    margin can be negative: the string barrier lets the fingertips reach below the string plane). `push` is the
-    distance moved, 0 when nothing penetrates. Unlike `pull` this never moves a hand toward the plane."""
+def barrier_depth(wrist, entry):
+    """How far the hand of a wrist at `wrist` is into a barrier, along its normal: how far its hand point is behind
+    the plane or, with fingertips, how far the lowest one is below the fingertip margin above it, whichever is more
+    (the margin can be negative: the string barrier lets the fingertips reach below the string plane). Negative
+    when the hand is clear by that much."""
     feature = entry.feature
     normal = feature.normal
-    push = -(wrist + entry.offset - feature.a).dot(normal)
+    depth = -(wrist + entry.offset - feature.a).dot(normal)
     tips = entry.fingertips
     if tips is not None and tips.vectors:
         lowest = min((wrist + v - feature.a).dot(normal) for v in tips.vectors)
-        push = max(push, tips.margin - lowest)
+        depth = max(depth, tips.margin - lowest)
+    return depth
+
+
+def clamp_out(wrist, entry, allowed=0.0):
+    """(wrist, push) with the wrist pushed along a barrier's normal just far enough that its hand is no more than
+    `allowed` into it (barrier_depth): by default, not behind the plane at all. `push` is the distance moved, 0
+    when nothing penetrates. Unlike `pull` this never moves a hand toward the plane."""
+    push = barrier_depth(wrist, entry) - allowed
     if push <= 0.0:
         return wrist, 0.0
-    return wrist + normal * push, push
+    return wrist + entry.feature.normal * push, push
 
 
 # Scaling -------------------------------------------------------------------------------------------------------
