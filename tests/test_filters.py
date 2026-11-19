@@ -154,6 +154,49 @@ class ClampOutTest(unittest.TestCase):
         self.assertAlmostEqual(push, 0.06, places=6)
         self.assertAlmostEqual(wrist.z - 0.2, 1.01, places=6)
 
+    def test_allowed_depth(self):
+        entry = self.entry()
+        wrist = Vector((0.0, 0.0, 1.05))
+        self.assertAlmostEqual(magnets.barrier_depth(wrist, entry), 0.05, places=6)
+        self.assertAlmostEqual(magnets.barrier_depth(Vector((0.0, 0.0, 1.3)), entry), -0.2, places=6)
+        moved, push = magnets.clamp_out(wrist, entry, 0.03)
+        self.assertAlmostEqual(push, 0.02, places=6)
+        self.assertAlmostEqual(moved.z, 1.07, places=6)
+        self.assertEqual(magnets.clamp_out(wrist, entry, 0.05 + 1e-6), (wrist, 0.0))
+
+    def test_keep_out_takes_back_only_what_a_move_added(self):
+        """solver.keep_out with a start point (the neck contact): a hand already in a barrier or the collider may
+        stay as deep as it was, and what held it is listed."""
+        settings = SimpleNamespace(barriers_ignore_distance=True)
+        entry = self.entry()
+        wrist, deep, clear = (Vector((0.0, 0.0, z)) for z in (1.05, 1.07, 1.3))
+        out, moved = solver.keep_out(settings, None, wrist, [], [entry])
+        self.assertAlmostEqual(out.z, 1.1, places=6)
+        self.assertAlmostEqual(moved, 0.05, places=6)
+        acted = []
+        out, moved = solver.keep_out(settings, None, wrist, [], [entry], deep, acted)
+        self.assertAlmostEqual(out.z, 1.07, places=6)
+        self.assertEqual([index for index, _ in acted], [0])
+        self.assertAlmostEqual(acted[0][1], 0.02, places=6)
+        acted = []
+        out, _ = solver.keep_out(settings, None, wrist, [], [entry], clear, acted)
+        self.assertAlmostEqual(out.z, 1.1, places=6)
+        self.assertAlmostEqual(acted[0][1], 0.05, places=6)
+        acted = []
+        self.assertEqual(solver.keep_out(settings, None, wrist, [], [entry], wrist, acted), (wrist, 0.0))
+        self.assertEqual(acted, [])
+        # The collider: the fingertip is 7 cm inside at the wrist asked for and was 4 cm inside at the start.
+        body = collider.Capsule(Vector((0.0, 0.0, 0.0)), Quaternion(), -0.3, 0.2, 0.12)
+        tips = [Vector((0.0, 0.0, -0.15))]
+        wrist, start = Vector((0.0, 0.0, 0.2)), Vector((0.0, 0.0, 0.23))
+        acted = []
+        out, _ = solver.keep_out(settings, body, wrist, tips, [], start, acted)
+        self.assertAlmostEqual(out.z, 0.23, places=6)
+        self.assertEqual(acted[0][0], 'COLLIDER')
+        self.assertAlmostEqual(acted[0][1], 0.03, places=6)
+        out, _ = solver.keep_out(settings, body, wrist, tips, [])
+        self.assertAlmostEqual(out.z, 0.27, places=6)
+
 
 class HooksTest(unittest.TestCase):
     """The solver's filter hooks: the first frame passes unchanged, later ones lag."""

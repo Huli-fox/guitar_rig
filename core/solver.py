@@ -18,6 +18,22 @@ they were solved for. The passes also refine the IK goal: the IK puts the IK for
 where a rig's hand does not start at that tail, the goal is corrected by the hand offset turned with the solved
 forearm.
 
+Neck contact: the aim's Max Swing can leave the neck short of a hand the fretboard holds. The preset's fretting
+magnets stay on the mount rotation (SAO's use_default_rotation), so nothing else brings the two together, and the
+passes settle with the hand off the neck. Once they have, the arm covers what the limit left:
+  1. the hand's aim point of the last pass is projected onto the aimed neck axis (with the fingertip shift) of the
+     guitar as it is shown, which keeps the hand's place along the neck;
+  2. its distance from that axis is measured for the guitar aimed with Max Swing and without (aim.limit_gap), both
+     at the frame's aim weight; the wrist target moves toward the shown axis by the difference, at most onto it,
+     times the weight of the Fretboard Plane magnet (found by its preset id, like the magnets a mode switches). So
+     the move is zero up to the limit, where the two aims are one, and fades with the aim weight and the magnet's;
+  3. the barriers and the chest collider take back what the move took the hand into them (keep_out), and the reach
+     clamp holds the target; the hand keeps its rotation, and only the fretting arm is solved again.
+The guitar is not aimed at the moved hand, and no filter sees the move: an aim at the moved hand would stay within
+the limit and call the move off again, on this frame or, through a filter's state, on the next.
+What is left between the hand and the neck is measured on the solved hand (FrameResult.neck_gap, for every aimed
+frame), and where the reach clamp, a barrier or the collider held the wrist back, the result names it.
+
 A bake (baker.py) solves frame after frame and carries a SolveState from one to the next: the filters (filters.py)
 and the snap magnets that held each hand (their hysteresis). The filters act where SAO's do:
 - the fingertip shift of fingertip magnets, and a magnet's pull when its Filter is set: One Euro filters the pull
@@ -58,8 +74,10 @@ from .mathx import rotation_angle
 TOLERANCE_M = 1e-4          # a wrist this close to its target, in metres, has converged
 TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than this has converged
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
+CONTACT_TOLERANCE_M = 1e-3  # a hand held this much further from the neck than its neck contact asked is reported
 SIDE_NAMES = {'L': msg("left"), 'R': msg("right")}
 FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
+FRETBOARD_ID = "FRETBOARD_PLANE"    # preset id of the magnet that holds the fretting hand on the fretboard
 SAO_UNITS_PER_M = 11.0      # MMD units per metre: SAO's lengths, in the arm space of its reference avatar
 CLAMPED_OFFSET_SAO = 1.0 / 9999.0   # SAO's offset of a clamped hand for the rotation filter, in its units
 PASSTHROUGH_WINDOW_S = 2.0  # Solve Frame samples this many seconds each side of its frame for the pass-through
@@ -325,13 +343,22 @@ class SideResult:
 
 
 @dataclass
+class NeckContact:
+    """What the fretting arm did where Max Swing kept the neck from the hand (see the module notes)."""
+    moved: Vector               # how far the wrist target moved toward the shown neck axis
+    limit: object = None        # what kept the hand off the neck all the same: 'REACH' (the reach clamp),
+    #                             'COLLIDER', or the index of a barrier magnet; None when the hand got there
+
+
+@dataclass
 class FrameResult:
     frame: int
     serial: int                 # settings.solve_serial when it was solved
     mode: str
     guitar: magnets.GuitarPose
     sides: dict                 # side -> SideResult
-    iterations: int             # passes: wrists, magnets and IK, one depsgraph update each
+    iterations: int             # passes: wrists, magnets and IK, one depsgraph update each (the neck contact's
+    #                             solves of the fretting arm are not counted)
     converged: bool
     metres_per_bu: float
     messages: list = field(default_factory=list)
@@ -339,6 +366,8 @@ class FrameResult:
     wrist_turn: float = 0.0     # radians the fretting wrist turned away from the mocap
     wrist_constrained: bool = False     # the wrist yaw was turned the constrained way
     frame_mode: modes.FrameMode = None  # the mode the frame was solved in
+    neck_contact: NeckContact = None    # the fretting arm's move where Max Swing limited the aim, or None
+    neck_gap: float = None      # how far the solved hand's aim point is from the shown neck axis (aimed frames)
 
     @property
     def swing(self):
@@ -379,6 +408,10 @@ def summary(result, items):
             acting.insert(0, msg(
                 'chest collider {distance:.1f} cm',
                 distance=contact.moved.length * result.metres_per_bu * 100.0))
+        if side == FRET_SIDE and result.neck_contact is not None:
+            acting.append(msg(
+                'neck contact {distance:.1f} cm',
+                distance=result.neck_contact.moved.length * result.metres_per_bu * 100.0))
         text = msg('{side} wrist moved {moved:.1f} cm', side=SIDE_NAMES[side], moved=moved)
         parts.append(text + (msg(' ({causes})', causes=join(acting)) if acting else ""))
     if result.neck is not None:
@@ -490,22 +523,39 @@ def sample_passthrough(context, rig, setup):
                                                                                 setup.fps).items()}
 
 
-def keep_out(settings, body, wrist, tips, entries):
+def barrier_holds(settings, wrist, entry):
+    """Whether the barrier `entry` holds the hand of a wrist at `wrist`: with Barriers Ignore Distance off, only
+    while its hand point is less than the magnet's reach behind the plane."""
+    if settings.barriers_ignore_distance:
+        return True
+    return -(wrist + entry.offset - entry.feature.a).dot(entry.feature.normal) < entry.params.reach
+
+
+def keep_out(settings, body, wrist, tips, entries, start=None, acted=None):
     """(wrist, push) with the wrist pushed out of the chest collider `body` (or None) and of the barrier magnets
     among `entries`, as Re-clamp does; `tips` are world vectors from the wrist to the fingertips the collider
-    keeps out."""
-    start = wrist
+    keeps out. With `start`, where the wrist was moved from, each takes back only what the move took the hand into
+    it: a hand that was inside at `start` (a filter's lag, a later magnet's pull) is left as deep as it was, so a
+    move of nothing is pushed nowhere. `acted`, a list, collects (what, distance) for what pushed: 'COLLIDER' or
+    a barrier's magnet index."""
+    first = wrist
     if body is not None:
-        wrist, _ = collider.push(body, wrist, [wrist + v for v in tips])
+        pushed, contact = collider.push(body, wrist, [wrist + v for v in tips])
+        needs = contact.moved.length
+        if start is not None and needs > 0.0:
+            inside = collider.push(body, start, [start + v for v in tips])[1].moved.length
+            pushed = wrist + contact.moved * (max(needs - inside, 0.0) / needs)
+        if acted is not None and (pushed - wrist).length > 0.0:
+            acted.append(('COLLIDER', (pushed - wrist).length))
+        wrist = pushed
     for entry in entries:
-        if not magnets.is_barrier(entry):
+        if not magnets.is_barrier(entry) or not barrier_holds(settings, wrist, entry):
             continue
-        if not settings.barriers_ignore_distance:
-            depth = -(wrist + entry.offset - entry.feature.a).dot(entry.feature.normal)
-            if depth >= entry.params.reach:
-                continue
-        wrist, _ = magnets.clamp_out(wrist, entry)
-    return wrist, (wrist - start).length
+        allowed = 0.0 if start is None else max(magnets.barrier_depth(start, entry), 0.0)
+        wrist, push = magnets.clamp_out(wrist, entry, allowed)
+        if acted is not None and push > 0.0:
+            acted.append((entry.index, push))
+    return wrist, (wrist - first).length
 
 
 def sample_arms(context, rig, cal):
@@ -557,6 +607,43 @@ def place_goal(rig, side, arm, goal, cal, bias=None):
     rig.helper("POLE", side).matrix_world = Matrix.Translation(pole)
     bend = ik.seed_bend(arm.shoulder, arm.elbow, arm.tip, arm.up, arm.forearm, goal)
     rig.helper("BEND", side).matrix_world = Matrix.LocRotScale(arm.elbow, bend, None)
+
+
+def place_wrist(rig, side, arm, target, hand, turn, cal, bias=None):
+    """Put the wrist of `side` on `target` with the hand's world rotation `hand`: the wrist-rotation helper, and
+    the IK goal where the forearm's tail is when the hand's head is on the target, for a forearm turned by `turn`
+    from its FK rotation (the two differ on a rig whose hand does not start at the forearm's tail)."""
+    rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hand, None)
+    place_goal(rig, side, arm, target - turn @ (arm.wrist - arm.tip), cal, bias)
+
+
+def read_arm(rig, side, arm, side_result):
+    """Read the solved elbow and wrist of `side` into `side_result` (SideResult) from the evaluated pose. Returns
+    the solved forearm's rotation relative to its FK one, for the next IK goal (place_wrist)."""
+    obj, chain = rig.armature, rig.chains[side]
+    forearm = obj.matrix_world @ obj.pose.bones[chain.forearm].matrix
+    side_result.elbow = forearm.translation
+    side_result.wrist = obj.matrix_world @ obj.pose.bones[chain.hand].head
+    return forearm.to_quaternion() @ arm.forearm.inverted()
+
+
+def fretboard_weight(settings, hits):
+    """The weight at which the Fretboard Plane magnet (found by its preset id) held the fretting hand, from the
+    hand's `hits`: 0 when the magnet is off, missing or out of reach."""
+    return max((hit.weight for index, hit in hits if settings.magnets[index].preset_id == FRETBOARD_ID), default=0.0)
+
+
+def held_back_message(settings, limit, gap, swing):
+    """The warning for a fretting hand that Max Swing (`swing`, in degrees) and `limit` (NeckContact.limit) keep
+    `gap` centimetres from the neck."""
+    if limit == 'REACH':
+        return msg('The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), '
+                   'and the arm cannot reach further.', gap=gap, limit=swing)
+    if limit == 'COLLIDER':
+        return msg('The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), '
+                   'and the chest collider holds the wrist back.', gap=gap, limit=swing)
+    return msg('The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), and '
+               '{name} holds the wrist back.', gap=gap, limit=swing, name=settings.magnets[limit].name)
 
 
 @dataclass
@@ -644,6 +731,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
     rotation = mounted.rotation.copy()
     passes = max(1, iterations or settings.iterations) + (1 if axis is not None else 0)
     count, converged, aimed, constrained = 0, False, None, False
+    neck_contact, neck_gap = None, None
     rig.set_active(True)
     try:
         for count in range(1, passes + 1):
@@ -651,7 +739,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
             if show_guitar:
                 root.matrix_world = guitar.matrix()
             hooks = Hooks(settings, state.bank, unit, guitar.location)
-            sides, hands = {}, {}
+            sides, hands, solids = {}, {}, {}
             for side, arm in arms.items():
                 hand = arm.hand
                 if side == FRET_SIDE and settings.wrist_blend > 0.0:
@@ -668,6 +756,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 if collide:
                     start, contact = collider.push(body, start, [start + v for v in tips])
                 entries = magnet_entries(settings, cal, side, arm, guitar, shapes, hand, hooks, frame_mode)
+                solids[side] = (body if collide else None, tips, entries)       # what keep_out keeps the hand out of
                 point, hits = magnets.apply(start, entries, barriers_ignore_distance=settings.barriers_ignore_distance,
                                             holding=state.holding.get(side, frozenset()))
                 if detail is not None:
@@ -677,16 +766,10 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                                                  (arm.wrist - arm.shoulder).length)
                 sides[side] = SideResult(arm.wrist.copy(), target, hits, clamped, collider=contact,
                                          passthrough=None if detail is None else detail.copy())
-                rig.helper("WRIST_ROT", side).matrix_world = Matrix.LocRotScale(target, hand, None)
-                goal = target - turns[side] @ (arm.wrist - arm.tip)
-                place_goal(rig, side, arm, goal, cal, root_bias(settings, side, arm))
+                place_wrist(rig, side, arm, target, hand, turns[side], cal, root_bias(settings, side, arm))
             context.view_layer.update()
             for side, arm in arms.items():
-                chain = rig.chains[side]
-                forearm = obj.matrix_world @ obj.pose.bones[chain.forearm].matrix
-                sides[side].elbow = forearm.translation
-                sides[side].wrist = obj.matrix_world @ obj.pose.bones[chain.hand].head
-                turns[side] = forearm.to_quaternion() @ arm.forearm.inverted()
+                turns[side] = read_arm(rig, side, arm, sides[side])
             settled = all(result.error < tolerance for result in sides.values())
             if axis is not None:
                 shift = aim_axis_shift(settings, shapes, sides[FRET_SIDE].hits, mounted.scale)
@@ -701,6 +784,36 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 break
             if axis is not None and count < passes:
                 rotation = following
+        if axis is not None:
+            # Neck contact (see the module notes): `guitar` is the one shown, `aim_point` on the hand solved for it.
+            a, p = axis[0] + shift, axis[1] + shift
+            fret, arm = sides[FRET_SIDE], arms[FRET_SIDE]
+            neck_gap = aim.axis_foot(guitar, guitar.rotation, a, p, aim_point)[1]
+            move = Vector()
+            if aimed.clamped:
+                move = aim.limit_move(mounted, guitar.rotation, a, p, aim_point, settings.aim_max_swing,
+                                      frame_mode.aim_weight) * fretboard_weight(settings, fret.hits)
+            if move.length > 0.0:
+                before, asked, acted = fret.target, neck_gap - move.length, []
+                solid, tips, entries = solids[FRET_SIDE]
+                point, _ = keep_out(settings, solid, before + move, tips, entries, before, acted)
+                target, clamped = ik.reach_clamp(point, arm.shoulder, settings.reach_clamp * arm.length,
+                                                 (arm.wrist - arm.shoulder).length)
+                if clamped:
+                    acted.append(('REACH', (target - point).length))
+                fret.target, fret.clamped = target, fret.clamped or clamped
+                for _ in range(max(1, iterations or settings.iterations)):      # more than one for an offset hand
+                    place_wrist(rig, FRET_SIDE, arm, target, hands[FRET_SIDE], turns[FRET_SIDE], cal,
+                                root_bias(settings, FRET_SIDE, arm))
+                    context.view_layer.update()
+                    turns[FRET_SIDE] = read_arm(rig, FRET_SIDE, arm, fret)
+                    if fret.error < tolerance:
+                        break
+                converged = converged and fret.error < tolerance
+                neck_gap = aim.axis_foot(guitar, guitar.rotation, a, p,
+                                         aim_target(obj, rig.chains[FRET_SIDE], arm, settings, cal))[1]
+                held = bool(acted) and neck_gap - asked > CONTACT_TOLERANCE_M / cal.metres_per_bu
+                neck_contact = NeckContact(target - before, max(acted, key=lambda item: item[1])[0] if held else None)
     except Exception:
         rig.set_active(False)
         state.bank.discard()
@@ -719,9 +832,18 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 'stretch.',
                 name=name, error=side_result.error * cal.metres_per_bu * 1000.0)))
     if aimed is not None and aimed.clamped:
-        messages.append(('INFO', msg(
-            'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting hand is far from the neck.',
-            limit=math.degrees(settings.aim_max_swing))))
+        limit, cm = math.degrees(settings.aim_max_swing), cal.metres_per_bu * 100.0
+        if neck_contact is None:
+            messages.append(('INFO', msg(
+                'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting hand is far from the neck.',
+                limit=limit)))
+        elif neck_contact.limit is None:
+            messages.append(('INFO', msg(
+                'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting wrist moved {distance:.1f} cm '
+                'to the neck instead.',
+                limit=limit, distance=neck_contact.moved.length * cm)))
+        else:
+            messages.append(('WARNING', held_back_message(settings, neck_contact.limit, neck_gap * cm, limit)))
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):
         messages.append(('INFO', msg(
             'The neck aim had not settled after {count} iterations: raise Iterations, or lower Relax if the '
@@ -729,7 +851,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
             count=count - 1)))
     return FrameResult(scene.frame_current, settings.solve_serial, frame_mode.mode, guitar, sides, count, converged,
                        cal.metres_per_bu, messages, aimed, rotation_angle(hands[FRET_SIDE], arms[FRET_SIDE].hand),
-                       constrained, frame_mode)
+                       constrained, frame_mode, neck_contact, neck_gap)
 
 
 def solve(context, rig, iterations=None):

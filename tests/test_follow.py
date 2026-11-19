@@ -4,6 +4,7 @@ import os
 import random
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import bpy
 from mathutils import Euler, Quaternion, Vector
@@ -79,6 +80,37 @@ class AimMathTest(unittest.TestCase):
         self.assertAlmostEqual(rotation_angle(result.rotation, Quaternion()), math.radians(35.0), places=4)
         half = aim.aim(guitar, a, p, target, weight=0.5)
         self.assertAlmostEqual(rotation_angle(half.rotation, Quaternion()), math.radians(45.0), places=4)
+
+    def test_limit_gap_and_move(self):
+        """What Max Swing leaves between the target and the neck axis: nothing up to the limit, growing from zero
+        past it, and nothing at weight 0. The move covers it across the shown neck."""
+        guitar = self.pose(Quaternion())
+        a, p = Vector((0.0, 0.0, 0.0)), Vector((1.0, 0.0, 0.0))        # the axis starts at the guitar origin
+        limit = math.radians(35.0)
+        for degrees in (10.0, 34.9, 35.1, 36.0, 60.0, 90.0):
+            angle = math.radians(degrees)
+            target = guitar.location + Vector((math.cos(angle), math.sin(angle), 0.0)) * 0.5
+            gap = aim.limit_gap(guitar, a, p, target, limit)
+            self.assertAlmostEqual(gap, 0.5 * math.sin(max(angle - limit, 0.0)), places=5, msg=degrees)
+            self.assertEqual(aim.limit_gap(guitar, a, p, target, limit, 0.0), 0.0)
+            self.assertLessEqual(aim.limit_gap(guitar, a, p, target, limit, 0.5), gap + 1e-6)
+            # Onto the axis of the guitar as the limited aim shows it, square to that axis.
+            shown = aim.aim(guitar, a, p, target, limit).rotation
+            move = aim.limit_move(guitar, shown, a, p, target, limit)
+            self.assertAlmostEqual(move.length, gap, places=5)
+            self.assertAlmostEqual(move.dot(shown @ (p - a)), 0.0, places=5)
+            if gap > 0.0:
+                self.assertLess(aim.axis_foot(guitar, shown, a, p, target + move)[1], 1e-5)
+            else:
+                self.assertEqual(move.length, 0.0)
+            # A guitar shown further off (here: not swung at all) is approached by the same distance, no more.
+            move = aim.limit_move(guitar, guitar.rotation, a, p, target, limit)
+            self.assertAlmostEqual(move.length, gap, places=5)
+            self.assertAlmostEqual(aim.axis_foot(guitar, guitar.rotation, a, p, target + move)[1],
+                                   0.5 * math.sin(angle) - gap, places=5)
+        foot, distance = aim.axis_foot(guitar, guitar.rotation, a, p, guitar.location + Vector((2.0, 0.3, 0.4)))
+        assert_vector(self, foot - guitar.location, (2.0, 0.0, 0.0))           # past the nut: the line goes on
+        self.assertAlmostEqual(distance, 0.5)
 
     def test_aim_shift(self):
         assert_vector(self, aim.aim_shift((0.0, 0.0, 2.0), 0.01, Vector((0.5, 0.5, 0.5))), (0.0, 0.0, 0.02))
@@ -516,3 +548,186 @@ class CrossRigWristTest(unittest.TestCase):
         self.assertLess(fingers_t.angle(offset @ Vector((1.0, 0.0, 0.0))), 1e-3)
         self.assertLess(fingers_a.angle(fingers_t), 1e-3)
         self.assertLess(across_a.angle(across_t), 1e-2)
+
+
+class NeckContactTest(unittest.TestCase):
+    """Follow with the neck aim at Max Swing: the fretting wrist covers the distance the limit leaves."""
+
+    setUp = FollowSolveTest.setUp
+    magnet = FollowSolveTest.magnet
+    margin = FollowSolveTest.margin
+    pose_fretting = FollowSolveTest.pose_fretting
+
+    def solve(self, max_swing=None):
+        if max_swing is not None:
+            self.settings.aim_max_swing = math.radians(max_swing)
+        result = solver.solve(bpy.context, build.find(self.settings))
+        bpy.context.view_layer.update()
+        return result
+
+    def local_axis(self, result, scale):
+        """The ends of the neck axis in GTR_ROOT space, shifted as the fretting hand's fingertip magnet has it."""
+        a, p = solver.aim_axis(self.root)
+        shift = solver.aim_axis_shift(self.settings, solver.magnet_shapes(self.root, self.settings.magnets)[0],
+                                      result.sides['L'].hits, scale)
+        return a + shift, p + shift
+
+    def evaluated_gap(self, result):
+        """The distance of the evaluated hand's aim point from the neck line of the guitar the rig shows."""
+        cal = calibrate.load(self.cal)
+        links = build.find(self.settings).chains['L']
+        arm = solver.sample_arm(self.obj, links, cal.char_frame, 0.0)
+        point = solver.aim_target(self.obj, links, arm, self.settings, cal)
+        shown = self.root.matrix_world
+        a, p = self.local_axis(result, shown.to_scale())
+        start, end = shown @ a, shown @ p
+        along = (end - start).normalized()
+        return ((point - start) - along * (point - start).dot(along)).length
+
+    def expected_move(self, result):
+        """The move across the shown neck for what the limit added, recomputed from this solve's aim."""
+        mounted = solver.mount_pose(self.obj, calibrate.load(self.cal), self.settings, self.root)
+        a, p = self.local_axis(result, mounted.scale)
+        return aim.limit_move(mounted, result.guitar.rotation, a, p, result.neck.target, self.settings.aim_max_swing,
+                              self.settings.aim_weight)
+
+    def transforms(self, result):
+        points = [getattr(result.sides[side], name).copy() for side in "LR" for name in ("wrist", "elbow")]
+        return points + [result.guitar.location.copy()], result.guitar.rotation.copy()
+
+    def assert_same(self, first, second):
+        for one, other in zip(first[0], second[0]):
+            self.assertLess((one - other).length, 1e-5)
+        self.assertLess(rotation_angle(first[1], second[1]), 1e-5)
+
+    def test_wrist_covers_what_the_limit_leaves(self):
+        self.pose_fretting()
+        free = self.solve()
+        self.assertFalse(free.neck.clamped)
+        self.assertIsNone(free.neck_contact)
+        self.assertGreater(free.swing, math.radians(15.0))
+        result = self.solve(8.0)
+        self.assertTrue(result.neck.clamped)
+        self.assertLessEqual(math.degrees(result.swing), 8.05)
+        self.assertTrue(result.converged, result.messages)
+        contact = result.neck_contact
+        self.assertIsNotNone(contact)
+        self.assertIsNone(contact.limit)
+        self.assertGreater(contact.moved.length, 0.04)
+        self.assertLess((contact.moved - self.expected_move(result)).length, 1e-5)
+        # The evaluated hand is on the shown neck line, as near as the unlimited aim leaves it; the result says so.
+        gap = self.evaluated_gap(result)
+        self.assertLess(gap, 0.005)
+        self.assertAlmostEqual(result.neck_gap, gap, places=5)
+        self.assertLess(abs(gap - free.neck_gap), 0.001)
+        self.assertLess(result.sides['L'].error, 2e-5)
+        # The fingertips clear the shown fretboard by the magnet's margin.
+        plane = landmarks.find(self.root)["FRETBOARD_PLANE"].matrix_world
+        normal = (plane.to_3x3().inverted().transposed() @ Vector((0.0, 0.0, 1.0))).normalized()
+        lowest = min(tip_heights(self.obj, 'L', plane.translation, normal).values())
+        self.assertLess(abs(lowest - self.margin(self.magnet("FRETBOARD_PLANE"))), 0.005)
+        texts = [text for _, text in result.messages]
+        self.assertTrue(any("the fretting wrist moved" in text for text in texts), texts)
+        self.assertIn("neck contact", solver.summary(result, self.settings.magnets))
+
+    def test_nothing_changes_without_the_limit(self):
+        """Below the limit, in Align and with the Fretboard Plane off, the solve is the one without the contact."""
+        self.pose_fretting()
+
+        def both(max_swing):
+            result = self.solve(max_swing)
+            self.assertIsNone(result.neck_contact)
+            with mock.patch.object(aim, "limit_move", side_effect=lambda *args: Vector((0.0, 0.0, 0.0))):
+                self.assert_same(self.transforms(result), self.transforms(self.solve(max_swing)))
+            return result
+        result = both(35.0)
+        self.assertFalse(result.neck.clamped)
+        self.assertIsNotNone(result.neck_gap)
+        self.magnet("FRETBOARD_PLANE").enabled = False
+        result = both(8.0)
+        self.assertTrue(result.neck.clamped)
+        self.assertTrue(any("the fretting hand is far from the neck" in text for _, text in result.messages))
+        self.magnet("FRETBOARD_PLANE").enabled = True
+        self.settings.mode = 'ALIGN'
+        result = both(8.0)
+        self.assertIsNone(result.neck)
+        self.assertIsNone(result.neck_gap)
+
+    def test_grows_from_zero_past_the_limit(self):
+        self.pose_fretting()
+        free = self.solve()
+        swing = math.degrees(free.swing)
+        moved = []
+        for under in (0.1, 0.5, 1.0, 2.0, 4.0):
+            result = self.solve(swing - under)
+            moved.append(result.neck_contact.moved.length)
+            if under == 0.1:
+                self.assertLess(moved[0], 0.002)
+                self.assertLess((result.sides['L'].wrist - free.sides['L'].wrist).length, 0.002)
+        self.assertEqual(moved, sorted(moved))
+        self.assertGreater(moved[-1], 0.015)
+        for first, second, step in zip(moved, moved[1:], (0.4, 0.5, 1.0, 2.0)):
+            self.assertLess(second - first, 0.012 * step)              # about 5 mm a degree on this neck
+
+    def test_fades_with_the_aim_and_contact_weights(self):
+        self.pose_fretting()
+        moved = []
+        for weight in (1.0, 0.75, 0.5, 0.25, 0.0):
+            self.settings.aim_weight = weight
+            result = self.solve(8.0)
+            contact = result.neck_contact
+            moved.append(0.0 if contact is None else contact.moved.length)
+            if weight > 0.0:
+                self.assertAlmostEqual(result.neck_gap, self.evaluated_gap(result), places=5)
+        self.assertEqual(moved, sorted(moved, reverse=True))
+        self.assertEqual(moved[-1], 0.0)
+        self.assertGreater(moved[-2], 0.0)
+        self.assertLess(max(one - other for one, other in zip(moved, moved[1:])), 0.5 * moved[0])
+        # A Fretboard Plane that holds the hand at a part weight asks for that part of the move.
+        self.settings.aim_weight = 1.0
+        item = self.magnet("FRETBOARD_PLANE")
+        item.power = 0.0
+        result = self.solve(8.0)
+        weight = result.hit(list(self.settings.magnets).index(item)).weight
+        self.assertTrue(0.05 < weight < 0.95, weight)
+        self.assertLess((result.neck_contact.moved - self.expected_move(result) * weight).length, 1e-5)
+
+    def test_neck_beyond_reach(self):
+        """The reach clamp holds the wrist short of the neck: the result reports the gap of the evaluated hand
+        and what held it, though the wrist is on its (clamped) IK target."""
+        self.pose_fretting()
+        found = landmarks.find(self.root)
+        neck = found["NECK_PIVOT"].matrix_world.translation.lerp(found["NUT"].matrix_world.translation, 0.5)
+        names = chain(self.obj, 'L')
+        rigs.reach(self.obj, *names, rigs.world_head(self.obj, names[0]).lerp(neck, 0.5), Vector((0.0, 0.5, -1.0)))
+        self.settings.reach_clamp = 0.5
+        cal = calibrate.load(self.cal)
+        mocap = solver.sample_arm(self.obj, build.find(self.settings).chains['L'], cal.char_frame, 0.0)
+        result = self.solve(2.0)
+        left = result.sides['L']
+        self.assertTrue(left.clamped)
+        self.assertEqual(result.neck_contact.limit, 'REACH')
+        allowed = max(0.5 * mocap.length, (mocap.wrist - mocap.shoulder).length)
+        self.assertLess((left.wrist - mocap.shoulder).length, allowed + 1e-4)
+        self.assertLess(left.error, 2e-5)
+        gap = self.evaluated_gap(result)
+        self.assertGreater(gap, 0.01)
+        self.assertAlmostEqual(result.neck_gap, gap, places=5)
+        warnings = [text for level, text in result.messages if level == 'WARNING']
+        self.assertTrue(any(f"The fretting hand is {gap * 100.0:.1f} cm from the neck" in text
+                            and "the arm cannot reach further" in text for text in warnings), result.messages)
+
+    def test_panel_and_overlay(self):
+        self.pose_fretting()
+        self.settings.aim_max_swing = math.radians(8.0)
+        assert bpy.ops.gtr.solve_frame() == {'FINISHED'}
+        result = solver.shown_result(self.scene)
+        labels = []
+        for cls in panels.CLASSES:
+            if getattr(cls, "poll", None) is None or cls.poll(bpy.context):
+                cls.draw(SimpleNamespace(layout=FakeLayout(self, labels)), bpy.context)
+        self.assertIn("Neck contact", labels)
+        target = result.sides['L'].target
+        lines, _, _, _ = overlay.build_geometry(bpy.context)
+        self.assertTrue(any((a - (target - result.neck_contact.moved)).length < 1e-6 and (b - target).length < 1e-6
+                            for a, b in zip(lines[0::2], lines[1::2])))
