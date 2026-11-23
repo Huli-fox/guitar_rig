@@ -1,5 +1,7 @@
 # GuitarRig
 
+English | [简体中文](README.zh-CN.md)
+
 GuitarRig is a Blender add-on that bakes guitar-playing arms onto a motion-captured character. You give it a character that already plays your mocap and a guitar model. It hangs the guitar on the character's chest, keeps the fretting hand on the fretboard and the picking hand over the strings, and bakes the result into new actions. Your own animation is never changed.
 
 It is a port of the guitar system in XR Animator / System Animator Online (SAO), solved offline frame by frame instead of live:
