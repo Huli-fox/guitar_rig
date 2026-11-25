@@ -5,8 +5,10 @@ its target from the mocap wrist), the IK's miss, the chest collider's push, and 
 its distance d (signed for planes: negative behind the plane) and its weight w, and on the pass-through hands how
 far the quick wrist motion that passed through the magnets reached; and for the frame the neck swing,
 the fretting wrist's turn, the solve passes and whether they settled, the mode and the neck aim weight, and on the
-frames with a neck aim how far the fretting wrist moved to the neck where Max Swing limited the aim (the solver's
-neck contact) and how far the hand's aim point ended from the aimed neck axis.
+frames with a neck aim how far Max Swing's limit asked the fretting wrist to move to the neck (the solver's neck
+contact), how far toward it the wrist moved after the barriers, the chest collider and the reach clamp, and how
+far the hand's aim point ended from the aimed neck axis. Neck Gap ranks the frames where the move was asked for,
+so a hand that something held back entirely still shows.
 
 The curves are keyed as animated custom properties of an empty, GTR_Diagnostics (the scene's
 settings.diagnostics), one key per frame in an action of its own, so that the Graph Editor shows them with the
@@ -35,8 +37,9 @@ METRICS = (
     ('IK_MISS', "IK Miss", "How far a solved wrist ended from its target", "mm"),
     ('SWING', "Neck Swing", "How far the neck aim turned the guitar from its mount", "°"),
     ('NECK_CONTACT', "Neck Contact",
-     "How far the fretting wrist moved to the neck where Max Swing limited the neck aim", "cm"),
-    ('NECK_GAP', "Neck Gap", "How far the fretting hand ended from the neck on the frames where its wrist moved to it",
+     "How far the fretting wrist moved toward the neck where Max Swing limited the neck aim", "cm"),
+    ('NECK_GAP', "Neck Gap",
+     "How far the fretting hand ended from the neck on the frames where Max Swing asked its wrist to move to it",
      "cm"),
     ('WRIST_TURN', "Wrist Turn", "How far the fretting wrist turned away from the mocap", "°"),
     ('COLLIDER', "Chest Collider", "How far the chest collider pushed a wrist", "cm"),
@@ -90,8 +93,9 @@ class Recorder:
         self._set("neck swing (°)", i, np.degrees(result.swing), 'SWING')
         if result.neck_gap is not None:
             contact = result.neck_contact
-            self._set("neck contact (cm)", i, contact.moved.length * cm if contact is not None else 0.0,
-                      'NECK_CONTACT')
+            asked, moved = (0.0, 0.0) if contact is None else (contact.asked.length * cm, contact.moved * cm)
+            self._set("neck contact asked (cm)", i, asked, 'NECK_ASKED')
+            self._set("neck contact (cm)", i, moved, 'NECK_CONTACT')
             self._set("neck gap (cm)", i, result.neck_gap * cm, 'NECK_GAP')
         self._set("fretting wrist turn (°)", i, np.degrees(result.wrist_turn), 'WRIST_TURN')
         self._set("solve passes", i, result.iterations, 'PASSES')
@@ -211,7 +215,7 @@ def scores(frames, curves, metric):
     if metric == 'NECK_CONTACT':
         return of('NECK_CONTACT')
     if metric == 'NECK_GAP':
-        return of('NECK_GAP') * (of('NECK_CONTACT') > 0.0)
+        return of('NECK_GAP') * (of('NECK_ASKED') > 0.0)       # asked for, whatever held the wrist back
     if metric == 'WRIST_TURN':
         return of('WRIST_TURN')
     if metric == 'COLLIDER':

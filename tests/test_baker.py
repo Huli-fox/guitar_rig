@@ -7,7 +7,7 @@ import numpy as np
 from mathutils import Euler, Matrix, Vector
 
 import rigs
-from guitar_rig.core import baker, calibrate, collider, keys, landmarks, mount, solver
+from guitar_rig.core import baker, calibrate, collider, keys, landmarks, modes, mount, solver
 from guitar_rig.core.bonemap import SIDES
 from guitar_rig.core.mathx import rotation_angle
 from guitar_rig.ops import bake as bake_ops
@@ -560,7 +560,7 @@ class NeckContactBakeTest(BakeTest):
         self.bake_limited()
         self.assert_matches_solve(frames=self.frames)
         results = self.solved()
-        moved = [0.0 if r.neck_contact is None else r.neck_contact.moved.length for r in results.values()]
+        moved = [0.0 if r.neck_contact is None else r.neck_contact.moved for r in results.values()]
         self.assertGreater(max(moved), 0.01)            # the wrist moved to the neck on some frames,
         self.assertEqual(min(moved), 0.0)               # and the aim was within the limit on others
         for frame, result in results.items():
@@ -599,6 +599,29 @@ class NeckContactBakeTest(BakeTest):
         self.assertTrue(any(f"The fretting hand stayed off the neck on {len(held)} frames" in text
                             for text in warnings), warnings)
         self.assert_matches_solve(frames=self.frames)
+
+
+class NeckContactReportTest(unittest.TestCase):
+    def test_held_back_entirely(self):
+        """The report counts a frame as moved to the neck only where the wrist got nearer it; a frame where
+        something took back all of the move is one of those held back."""
+        stats = baker.Stats()
+        side = SimpleNamespace(error=0.0, clamped=False, collider=None, target=Vector(), fk_wrist=Vector())
+        asked = Vector((0.0, 0.0, -0.2))
+        for frame, contact, gap in ((1, solver.NeckContact(asked * 0.1, asked * 0.1, 0.02), 0.002),
+                                    (2, solver.NeckContact(asked, Vector(), 0.0, 'COLLIDER'), 0.2),
+                                    (3, None, 0.001)):
+            stats.note(frame, SimpleNamespace(sides={'L': side, 'R': side}, converged=True, neck_contact=contact,
+                                              neck=SimpleNamespace(clamped=contact is not None), neck_gap=gap), 1.0)
+        self.assertEqual((stats.aim_limited, stats.contact, stats.contact_frame), (2, 1, 1))
+        self.assertAlmostEqual(stats.contact_largest, 0.02)
+        self.assertEqual((stats.held, stats.held_frame), ([2], 2))
+        self.assertAlmostEqual(stats.held_gap, 0.2)
+        scene_runs = SimpleNamespace(runs=lambda start, end: [(start, end, SimpleNamespace(override=modes.SCENE))])
+        job = SimpleNamespace(stats=stats, frames=[1, 2, 3], start=1, end=3, setup=SimpleNamespace(schedule=scene_runs))
+        report = "\n".join(text for _, text in baker.BakeJob._report(job, 10, 0.0, None, 1.0))
+        self.assertIn("The fretting wrist moved to the neck for it on 1 frames, by up to 2.0 cm (frame 1).", report)
+        self.assertIn("The fretting hand stayed off the neck on 1 frames (2), by up to 20.0 cm (frame 2)", report)
 
 
 class NeckContactOffsetHandTest(NeckContactBakeTest):

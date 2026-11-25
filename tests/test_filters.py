@@ -1,11 +1,12 @@
 import math
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 from mathutils import Quaternion, Vector
 
-from guitar_rig.core import collider, filters, magnets, solver
+from guitar_rig.core import collider, filters, ik, magnets, solver
 from guitar_rig.core.mathx import rotation_angle
 
 
@@ -196,6 +197,69 @@ class ClampOutTest(unittest.TestCase):
         self.assertAlmostEqual(acted[0][1], 0.03, places=6)
         out, _ = solver.keep_out(settings, body, wrist, tips, [])
         self.assertAlmostEqual(out.z, 0.27, places=6)
+
+    def test_keep_out_holds_a_move_through_a_barrier_past_its_reach(self):
+        """With Barriers Ignore Distance off a barrier holds a hand only within its reach behind the plane, but a
+        move that starts in front of it and ends further behind than that went through it, and is held."""
+        settings = SimpleNamespace(barriers_ignore_distance=False)
+        entry = self.entry()                                    # reach 0.1
+        start, deep = Vector((0.0, 0.0, 1.15)), Vector((0.0, 0.0, 0.9))     # hand points 5 cm in front, 20 behind
+        self.assertEqual(solver.keep_out(settings, None, deep, [], [entry]), (deep, 0.0))
+        acted = []
+        out, push = solver.keep_out(settings, None, deep, [], [entry], start, acted)
+        self.assertAlmostEqual(out.z, 1.1, places=6)            # the hand point on the plane
+        self.assertAlmostEqual(push, 0.2, places=6)
+        self.assertEqual([what for what, _ in acted], [0])
+        # A hand that was already beyond its reach behind the plane is not held, wherever it moves there.
+        self.assertEqual(solver.keep_out(settings, None, deep, [], [entry], Vector((0.0, 0.0, 0.95))), (deep, 0.0))
+
+    def contact_scene(self):
+        """(settings, solid, reach, before, move): the neck contact's move along a barrier (the plane z = 0, the
+        hand clear above it), out of the reach of a shoulder below it. The reach clamp alone pulls the target 1.9 cm
+        behind the barrier."""
+        feature = magnets.Feature('PLANE', Vector((0.0, 0.0, 0.0)), normal=Vector((0.0, 0.0, 1.0)))
+        entry = magnets.Entry(3, feature, magnets.Params(0.1, crossable=False), Vector())
+        reach = (Vector((0.0, 0.0, -0.2)), 0.45, 0.0)          # ik.reach_clamp's shoulder, reach and FK distance
+        return (SimpleNamespace(barriers_ignore_distance=True), (None, [], [entry]), reach,
+                Vector((0.3, 0.0, 0.02)), Vector((0.2, 0.0, 0.0)))
+
+    def test_contact_target_meets_the_reach_clamp_and_the_barriers(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        shoulder, radius, _ = reach
+        clamped, _ = ik.reach_clamp(before + move, *reach)
+        self.assertLess(clamped.z, -0.018)                      # keep_out, then the clamp: behind the barrier
+        target, was_clamped, acted = solver.contact_target(settings, solid, before, move, reach, 1e-6)
+        self.assertTrue(was_clamped)
+        self.assertEqual(set(acted), {3, 'REACH'})
+        self.assertGreater(target.z, -1e-6)
+        self.assertLess((target - shoulder).length, radius + 1e-6)
+        # It slid along the barrier to where the reach ends on it.
+        self.assertLess((target - Vector((math.sqrt(radius ** 2 - 0.2 ** 2), 0.0, 0.0))).length, 1e-4)
+        # What meets them both goes through untouched.
+        target, was_clamped, acted = solver.contact_target(settings, solid, before, move * 0.25, reach, 1e-6)
+        self.assertEqual((target, was_clamped, acted), (before + move * 0.25, False, {}))
+
+    def test_contact_target_stops_on_the_way_where_the_turns_do_not_meet(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        with mock.patch.object(solver, "CONTACT_ROUNDS", 1):
+            target, was_clamped, acted = solver.contact_target(settings, solid, before, move, reach, 1e-6)
+        self.assertTrue(was_clamped)
+        self.assertEqual(set(acted), {'REACH'})
+        clamped, _ = ik.reach_clamp(before + move, *reach)
+        along = (target - before).normalized()
+        self.assertLess(along.angle(clamped - before), 1e-4)    # toward the clamped target, as far as it clears
+        self.assertAlmostEqual(target.z, 0.0, delta=1e-6)
+
+    def test_contact_target_stays_where_it_started_when_held_back_entirely(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        feature = magnets.Feature('PLANE', before.copy(), normal=-move.normalized())    # square across the move
+        barrier = magnets.Entry(5, feature, magnets.Params(0.1, crossable=False), Vector())
+        target, was_clamped, acted = solver.contact_target(settings, (None, [], [barrier]), before, move,
+                                                           (reach[0], 10.0, 0.0), 1e-6)
+        self.assertEqual(target, before)
+        self.assertFalse(was_clamped)
+        self.assertEqual(list(acted), [5])
+        self.assertAlmostEqual(acted[5], move.length, places=6)
 
 
 class HooksTest(unittest.TestCase):

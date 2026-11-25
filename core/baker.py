@@ -310,10 +310,11 @@ class Stats:
     clamped: int = 0            # frames where the reach clamp acted
     collider: int = 0           # frames where the chest collider pushed a hand
     aim_limited: int = 0        # frames where the neck aim hit Max Swing
-    contact: int = 0            # frames where the fretting wrist moved to the neck for it (the neck contact)
+    contact: int = 0            # frames where the fretting wrist moved toward the neck for it (the neck contact)
     contact_largest: float = 0.0    # the largest of those moves, in metres
     contact_frame: int = None
-    held: list = field(default_factory=list)    # frames where something kept the hand off the neck all the same
+    held: list = field(default_factory=list)    # frames where something kept the hand off the neck all the same,
+    #                                             however little the wrist moved
     held_gap: float = 0.0       # the largest distance left between hand and neck on those frames, in metres
     held_frame: int = None
     largest: float = 0.0        # the largest wrist correction, in metres
@@ -331,10 +332,11 @@ class Stats:
         self.aim_limited += result.neck is not None and result.neck.clamped
         contact = result.neck_contact
         if contact is not None:
-            self.contact += 1
-            moved = contact.moved.length * metres_per_bu
-            if moved > self.contact_largest:
-                self.contact_largest, self.contact_frame = moved, frame
+            moved = contact.moved * metres_per_bu
+            if moved > 0.0:
+                self.contact += 1
+                if moved > self.contact_largest:
+                    self.contact_largest, self.contact_frame = moved, frame
             if contact.limit is not None:
                 self.held.append(frame)
                 gap = result.neck_gap * metres_per_bu
@@ -559,7 +561,7 @@ class BakeJob(Job):
             notes.append(msg('The reach clamp acted on {count} frames.', count=stats.clamped))
         if stats.aim_limited:
             notes.append(msg('The Max Swing limit acted on {count} frames.', count=stats.aim_limited))
-        if stats.contact_frame is not None:
+        if stats.contact:
             notes.append(msg(
                 'The fretting wrist moved to the neck for it on {count} frames, by up to {distance:.1f} cm (frame '
                 '{frame}).',

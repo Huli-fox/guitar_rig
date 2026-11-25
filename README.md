@@ -255,7 +255,8 @@ Every bake records what the solve did on each frame. The values are keyed as ani
 | `L`/`R <magnet> d (cm)` | The hand point's distance from the magnet. For planes it is signed: negative means behind the plane. |
 | `L`/`R <magnet> w` | The magnet's weight: 1 is a full snap or a barrier clamp |
 | `neck swing (°)`, `fretting wrist turn (°)` | How far the guitar and the fretting wrist turned |
-| `neck contact (cm)` | How far the fretting wrist moved to the neck because Max Swing limited the neck aim (0 where it did not) |
+| `neck contact asked (cm)` | How far the fretting wrist was to move to the neck because Max Swing limited the neck aim (0 where it did not) |
+| `neck contact (cm)` | How far toward the neck it moved, less what the reach clamp, the barriers and the chest collider took back |
 | `neck gap (cm)` | How far the solved fretting hand's aim point is from the neck line (frames with a neck aim) |
 | `solve passes`, `settled` | Solve iterations, and whether the aim and wrists settled |
 | `mode (0 follow, 1 align)`, `neck aim weight` | The frame's mode and aim weight |
@@ -265,8 +266,8 @@ The **Diagnostics** panel ranks the five worst frames for a chosen measure; clic
 - **Barrier Depth**: how far a hand was behind a barrier before it was clamped;
 - **IK Miss**;
 - **Neck Swing**;
-- **Neck Contact**: how far the fretting wrist moved to the neck at Max Swing;
-- **Neck Gap**: how far the hand stayed from the neck on those frames;
+- **Neck Contact**: how far the fretting wrist moved toward the neck at Max Swing;
+- **Neck Gap**: how far the hand stayed from the neck on the frames where it was to move there, including those where something held it back entirely;
 - **Wrist Turn**;
 - **Chest Collider**;
 - **Unsettled**.

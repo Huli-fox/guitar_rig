@@ -28,11 +28,14 @@ passes settle with the hand off the neck. Once they have, the arm covers what th
      times the weight of the Fretboard Plane magnet (found by its preset id, like the magnets a mode switches). So
      the move is zero up to the limit, where the two aims are one, and fades with the aim weight and the magnet's;
   3. the barriers and the chest collider take back what the move took the hand into them (keep_out), and the reach
-     clamp holds the target; the hand keeps its rotation, and only the fretting arm is solved again.
+     clamp holds the target, in turns until all of them hold (contact_target): a clamp that pulls the target back
+     into a barrier is pushed out again. The hand keeps its rotation, and only the fretting arm is solved again.
 The guitar is not aimed at the moved hand, and no filter sees the move: an aim at the moved hand would stay within
 the limit and call the move off again, on this frame or, through a filter's state, on the next.
 What is left between the hand and the neck is measured on the solved hand (FrameResult.neck_gap, for every aimed
-frame), and where the reach clamp, a barrier or the collider held the wrist back, the result names it.
+frame), and NeckContact keeps the move asked, how far the target moved and how much nearer the neck that took the
+hand. Where the target itself stops short of what the move asked for, because the reach clamp, a barrier or the
+collider held it back, the result names what did; an IK that misses the target is reported as a miss.
 
 A bake (baker.py) solves frame after frame and carries a SolveState from one to the next: the filters (filters.py)
 and the snap magnets that held each hand (their hysteresis). The filters act where SAO's do:
@@ -75,6 +78,10 @@ TOLERANCE_M = 1e-4          # a wrist this close to its target, in metres, has c
 TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than this has converged
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
 CONTACT_TOLERANCE_M = 1e-3  # a hand held this much further from the neck than its neck contact asked is reported
+CLEAR_TOLERANCE_M = 1e-6    # a neck contact target that keep_out and the reach clamp move less than this, in metres,
+#                             meets them; one they leave this near where it started stays there
+CONTACT_ROUNDS = 16         # turns of keep_out and the reach clamp a neck contact target gets to meet both
+CONTACT_BISECTIONS = 30     # halvings that find how far toward an unmet target the neck contact can go
 SIDE_NAMES = {'L': msg("left"), 'R': msg("right")}
 FRET_SIDE = 'L'             # the fretting hand: the neck aims at it and its wrist follows the guitar
 FRETBOARD_ID = "FRETBOARD_PLANE"    # preset id of the magnet that holds the fretting hand on the fretboard
@@ -345,7 +352,11 @@ class SideResult:
 @dataclass
 class NeckContact:
     """What the fretting arm did where Max Swing kept the neck from the hand (see the module notes)."""
-    moved: Vector               # how far the wrist target moved toward the shown neck axis
+    asked: Vector               # the move toward the shown neck axis asked of the wrist target (never zero)
+    shift: Vector               # how far the wrist target moved: `asked`, less what the barriers, the chest
+    #                             collider and the reach clamp took back or turned aside
+    moved: float = 0.0          # how much nearer the neck axis that takes the hand: its distance before the move
+    #                             less the one the target leaves (0 if no nearer); `asked` is that long
     limit: object = None        # what kept the hand off the neck all the same: 'REACH' (the reach clamp),
     #                             'COLLIDER', or the index of a barrier magnet; None when the hand got there
 
@@ -408,10 +419,10 @@ def summary(result, items):
             acting.insert(0, msg(
                 'chest collider {distance:.1f} cm',
                 distance=contact.moved.length * result.metres_per_bu * 100.0))
-        if side == FRET_SIDE and result.neck_contact is not None:
+        if side == FRET_SIDE and result.neck_contact is not None and result.neck_contact.moved > 0.0:
             acting.append(msg(
                 'neck contact {distance:.1f} cm',
-                distance=result.neck_contact.moved.length * result.metres_per_bu * 100.0))
+                distance=result.neck_contact.moved * result.metres_per_bu * 100.0))
         text = msg('{side} wrist moved {moved:.1f} cm', side=SIDE_NAMES[side], moved=moved)
         parts.append(text + (msg(' ({causes})', causes=join(acting)) if acting else ""))
     if result.neck is not None:
@@ -536,8 +547,9 @@ def keep_out(settings, body, wrist, tips, entries, start=None, acted=None):
     among `entries`, as Re-clamp does; `tips` are world vectors from the wrist to the fingertips the collider
     keeps out. With `start`, where the wrist was moved from, each takes back only what the move took the hand into
     it: a hand that was inside at `start` (a filter's lag, a later magnet's pull) is left as deep as it was, so a
-    move of nothing is pushed nowhere. `acted`, a list, collects (what, distance) for what pushed: 'COLLIDER' or
-    a barrier's magnet index."""
+    move of nothing is pushed nowhere. A barrier that held the hand at `start` holds it at the wrist as well, even
+    past its reach with Barriers Ignore Distance off: a move does not jump through it. `acted`, a list, collects
+    (what, distance) for what pushed: 'COLLIDER' or a barrier's magnet index."""
     first = wrist
     if body is not None:
         pushed, contact = collider.push(body, wrist, [wrist + v for v in tips])
@@ -549,13 +561,62 @@ def keep_out(settings, body, wrist, tips, entries, start=None, acted=None):
             acted.append(('COLLIDER', (pushed - wrist).length))
         wrist = pushed
     for entry in entries:
-        if not magnets.is_barrier(entry) or not barrier_holds(settings, wrist, entry):
+        if not magnets.is_barrier(entry):
+            continue
+        if not barrier_holds(settings, wrist, entry) and (start is None or not barrier_holds(settings, start, entry)):
             continue
         allowed = 0.0 if start is None else max(magnets.barrier_depth(start, entry), 0.0)
         wrist, push = magnets.clamp_out(wrist, entry, allowed)
         if acted is not None and push > 0.0:
             acted.append((entry.index, push))
     return wrist, (wrist - first).length
+
+
+def contact_target(settings, solid, before, move, reach, tolerance):
+    """(target, clamped, acted): the neck contact's wrist target (see the module notes), `before + move` as far as
+    the barriers and the chest collider (`solid`: keep_out's (body, tips, entries)) and the reach clamp (`reach`:
+    ik.reach_clamp's (shoulder, reach, fk_distance)) all let it get from `before`, which meets them all.
+
+    In turns, keep_out takes back what the move took the hand into a barrier or the collider and the reach clamp
+    pulls the target toward the shoulder, until neither moves it more than `tolerance`: a target the clamp pulls
+    back into a barrier is pushed out again, and slides along what holds it. Where they do not meet in
+    CONTACT_ROUNDS turns, the target stops on its way from `before` to the last one, within reach as both ends
+    are, at the furthest point keep_out leaves where it is. A target left within `tolerance` of `before` is
+    `before`. `clamped`: the reach clamp acted; `acted`: {what: distance} each took back, what being 'REACH',
+    'COLLIDER' or a barrier's magnet index."""
+    body, tips, entries = solid
+    acted, clamped = {}, False
+
+    def stays(point):
+        return keep_out(settings, body, point, tips, entries, before)[1] <= tolerance
+
+    point = before + move
+    for _ in range(CONTACT_ROUNDS):
+        pushes = []
+        point, pushed = keep_out(settings, body, point, tips, entries, before, pushes)
+        for what, distance in pushes:
+            acted[what] = acted.get(what, 0.0) + distance
+        target, pulled = ik.reach_clamp(point, *reach)
+        pull = (target - point).length
+        if pulled:
+            clamped = True
+            acted['REACH'] = acted.get('REACH', 0.0) + pull
+        point = target
+        if pushed <= tolerance and pull <= tolerance:
+            break
+    else:
+        if not stays(point):
+            span, near, far = point - before, 0.0, 1.0
+            for _ in range(CONTACT_BISECTIONS):
+                middle = 0.5 * (near + far)
+                if stays(before + span * middle):
+                    near = middle
+                else:
+                    far = middle
+            point = before + span * near
+    if (point - before).length <= tolerance:
+        point = before.copy()
+    return point, clamped, acted
 
 
 def sample_arms(context, rig, cal):
@@ -794,13 +855,11 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 move = aim.limit_move(mounted, guitar.rotation, a, p, aim_point, settings.aim_max_swing,
                                       frame_mode.aim_weight) * fretboard_weight(settings, fret.hits)
             if move.length > 0.0:
-                before, asked, acted = fret.target, neck_gap - move.length, []
-                solid, tips, entries = solids[FRET_SIDE]
-                point, _ = keep_out(settings, solid, before + move, tips, entries, before, acted)
-                target, clamped = ik.reach_clamp(point, arm.shoulder, settings.reach_clamp * arm.length,
-                                                 (arm.wrist - arm.shoulder).length)
-                if clamped:
-                    acted.append(('REACH', (target - point).length))
+                before, start = fret.target, neck_gap
+                target, clamped, acted = contact_target(
+                    settings, solids[FRET_SIDE], before, move,
+                    (arm.shoulder, settings.reach_clamp * arm.length, (arm.wrist - arm.shoulder).length),
+                    CLEAR_TOLERANCE_M / cal.metres_per_bu)
                 fret.target, fret.clamped = target, fret.clamped or clamped
                 for _ in range(max(1, iterations or settings.iterations)):      # more than one for an offset hand
                     place_wrist(rig, FRET_SIDE, arm, target, hands[FRET_SIDE], turns[FRET_SIDE], cal,
@@ -812,8 +871,12 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
                 converged = converged and fret.error < tolerance
                 neck_gap = aim.axis_foot(guitar, guitar.rotation, a, p,
                                          aim_target(obj, rig.chains[FRET_SIDE], arm, settings, cal))[1]
-                held = bool(acted) and neck_gap - asked > CONTACT_TOLERANCE_M / cal.metres_per_bu
-                neck_contact = NeckContact(target - before, max(acted, key=lambda item: item[1])[0] if held else None)
+                # How near the neck the target takes the hand, which follows it with its rotation kept. The solved
+                # hand's distance would count an IK that misses the target against what held the target back.
+                reached = aim.axis_foot(guitar, guitar.rotation, a, p, aim_point + (target - before))[1]
+                held = bool(acted) and reached - (start - move.length) > CONTACT_TOLERANCE_M / cal.metres_per_bu
+                neck_contact = NeckContact(move, target - before, max(start - reached, 0.0),
+                                           max(acted, key=acted.get) if held else None)
     except Exception:
         rig.set_active(False)
         state.bank.discard()
@@ -841,7 +904,7 @@ def solve_pose(context, rig, setup, pose, state, iterations=None, show_guitar=Tr
             messages.append(('INFO', msg(
                 'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting wrist moved {distance:.1f} cm '
                 'to the neck instead.',
-                limit=limit, distance=neck_contact.moved.length * cm)))
+                limit=limit, distance=neck_contact.moved * cm)))
         else:
             messages.append(('WARNING', held_back_message(settings, neck_contact.limit, neck_gap * cm, limit)))
     if axis is not None and not converged and all(r.error < tolerance for r in sides.values()):

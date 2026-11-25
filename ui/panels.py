@@ -584,7 +584,7 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
             if result.neck_contact is not None:
                 rows.append((mark('Neck contact'), msg(
                     'wrist moved {moved:.1f} cm, gap {gap:.1f} cm',
-                    moved=result.neck_contact.moved.length * result.metres_per_bu * 100.0,
+                    moved=result.neck_contact.moved * result.metres_per_bu * 100.0,
                     gap=result.neck_gap * result.metres_per_bu * 100.0)))
             if result.wrist_turn > 0.0:
                 rows.append((mark('Fretting wrist'), msg(

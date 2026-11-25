@@ -7,10 +7,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 import bpy
-from mathutils import Euler, Quaternion, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 import rigs
-from guitar_rig.core import aim, calibrate, landmarks, magnets, presets, solver, wrist
+from guitar_rig.core import aim, calibrate, collider, ik, landmarks, magnets, presets, solver, wrist
 from guitar_rig.core.mathx import rotation_angle
 from guitar_rig.rig import build
 from guitar_rig.ui import overlay, panels
@@ -572,12 +572,13 @@ class NeckContactTest(unittest.TestCase):
                                       result.sides['L'].hits, scale)
         return a + shift, p + shift
 
-    def evaluated_gap(self, result):
-        """The distance of the evaluated hand's aim point from the neck line of the guitar the rig shows."""
+    def evaluated_gap(self, result, shift=None):
+        """The distance of the evaluated hand's aim point from the neck line of the guitar the rig shows; with
+        `shift`, of that point less `shift`."""
         cal = calibrate.load(self.cal)
         links = build.find(self.settings).chains['L']
         arm = solver.sample_arm(self.obj, links, cal.char_frame, 0.0)
-        point = solver.aim_target(self.obj, links, arm, self.settings, cal)
+        point = solver.aim_target(self.obj, links, arm, self.settings, cal) - (Vector() if shift is None else shift)
         shown = self.root.matrix_world
         a, p = self.local_axis(result, shown.to_scale())
         start, end = shown @ a, shown @ p
@@ -613,8 +614,10 @@ class NeckContactTest(unittest.TestCase):
         contact = result.neck_contact
         self.assertIsNotNone(contact)
         self.assertIsNone(contact.limit)
-        self.assertGreater(contact.moved.length, 0.04)
-        self.assertLess((contact.moved - self.expected_move(result)).length, 1e-5)
+        self.assertGreater(contact.moved, 0.04)
+        self.assertLess((contact.asked - self.expected_move(result)).length, 1e-5)
+        self.assertLess((contact.shift - contact.asked).length, 1e-6)  # nothing took any of it back
+        self.assertAlmostEqual(contact.moved, contact.asked.length, delta=1e-5)
         # The evaluated hand is on the shown neck line, as near as the unlimited aim leaves it; the result says so.
         gap = self.evaluated_gap(result)
         self.assertLess(gap, 0.005)
@@ -660,7 +663,7 @@ class NeckContactTest(unittest.TestCase):
         moved = []
         for under in (0.1, 0.5, 1.0, 2.0, 4.0):
             result = self.solve(swing - under)
-            moved.append(result.neck_contact.moved.length)
+            moved.append(result.neck_contact.moved)
             if under == 0.1:
                 self.assertLess(moved[0], 0.002)
                 self.assertLess((result.sides['L'].wrist - free.sides['L'].wrist).length, 0.002)
@@ -676,7 +679,7 @@ class NeckContactTest(unittest.TestCase):
             self.settings.aim_weight = weight
             result = self.solve(8.0)
             contact = result.neck_contact
-            moved.append(0.0 if contact is None else contact.moved.length)
+            moved.append(0.0 if contact is None else contact.moved)
             if weight > 0.0:
                 self.assertAlmostEqual(result.neck_gap, self.evaluated_gap(result), places=5)
         self.assertEqual(moved, sorted(moved, reverse=True))
@@ -690,7 +693,7 @@ class NeckContactTest(unittest.TestCase):
         result = self.solve(8.0)
         weight = result.hit(list(self.settings.magnets).index(item)).weight
         self.assertTrue(0.05 < weight < 0.95, weight)
-        self.assertLess((result.neck_contact.moved - self.expected_move(result) * weight).length, 1e-5)
+        self.assertLess((result.neck_contact.asked - self.expected_move(result) * weight).length, 1e-5)
 
     def test_neck_beyond_reach(self):
         """The reach clamp holds the wrist short of the neck: the result reports the gap of the evaluated hand
@@ -707,6 +710,8 @@ class NeckContactTest(unittest.TestCase):
         left = result.sides['L']
         self.assertTrue(left.clamped)
         self.assertEqual(result.neck_contact.limit, 'REACH')
+        self.assert_moved(result)
+        self.assertLess(result.neck_contact.moved, result.neck_contact.shift.length - 0.001)   # partly not nearer
         allowed = max(0.5 * mocap.length, (mocap.wrist - mocap.shoulder).length)
         self.assertLess((left.wrist - mocap.shoulder).length, allowed + 1e-4)
         self.assertLess(left.error, 2e-5)
@@ -716,6 +721,169 @@ class NeckContactTest(unittest.TestCase):
         warnings = [text for level, text in result.messages if level == 'WARNING']
         self.assertTrue(any(f"The fretting hand is {gap * 100.0:.1f} cm from the neck" in text
                             and "the arm cannot reach further" in text for text in warnings), result.messages)
+
+    def contact_scene(self, max_swing=8.0):
+        """Solve the fretting pose with the neck aim at Max Swing: (result, where its neck contact moved the
+        wrist target from). Nothing holds the move back."""
+        self.pose_fretting()
+        result = self.solve(max_swing)
+        self.assertIsNone(result.neck_contact.limit)
+        return result, result.sides['L'].target - result.neck_contact.shift
+
+    def add_barrier(self, result, point, normal):
+        """A barrier magnet on the fretting hand through the world `point`, facing `normal`, placed with the mount
+        rotation of `result`'s guitar, as the preset's fretting magnets are: the neck aim does not move it.
+        Returns its magnet index."""
+        guitar = result.guitar
+        inverse = guitar.default_rotation.inverted()
+        empty = bpy.data.objects.new("Test Barrier", None)
+        self.scene.collection.objects.link(empty)
+        empty.parent = self.root
+        empty.matrix_basis = Matrix.LocRotScale(inverse @ (point - guitar.location) / guitar.scale[0],
+                                                (inverse @ normal).to_track_quat('Z', 'Y'), None)
+        bpy.context.view_layer.update()                         # the solve reads its matrix_world
+        item = self.settings.magnets.add()
+        item.name, item.hand, item.kind, item.landmark_a = "Test Barrier", 'L', 'PLANE', empty
+        item.crossable, item.power, item.use_default_rotation = False, -99.0, True
+        return len(self.settings.magnets) - 1
+
+    def assert_moved(self, result):
+        """NeckContact.moved is how much nearer the shown neck line the move took the hand: the solved hand
+        (on its target) less the target's shift is the hand before the move. Returns the evaluated gap."""
+        contact = result.neck_contact
+        gap = self.evaluated_gap(result)
+        self.assertAlmostEqual(contact.moved, max(self.evaluated_gap(result, contact.shift) - gap, 0.0), delta=1e-4)
+        return gap
+
+    def assert_held(self, result, before, limit, words):
+        """The neck contact moved the target from `before`, `limit` held it back, and the warning gives the
+        evaluated hand's gap with `words`."""
+        left, contact = result.sides['L'], result.neck_contact
+        self.assertLess((left.target - contact.shift - before).length, 1e-5)
+        self.assertEqual(contact.limit, limit)
+        self.assertLess(left.error, 2e-5)
+        gap = self.assert_moved(result)
+        self.assertAlmostEqual(result.neck_gap, gap, places=5)
+        warnings = [text for level, text in result.messages if level == 'WARNING']
+        self.assertTrue(any(f"The fretting hand is {gap * 100.0:.1f} cm from the neck" in text and words in text
+                            for text in warnings), result.messages)
+
+    def test_barrier_holds_the_wrist_back(self):
+        """A barrier across the move stops the wrist target on it, and the result names the barrier."""
+        first, before = self.contact_scene()
+        asked = first.neck_contact.asked
+        index = self.add_barrier(first, before + asked * 0.5, -asked.normalized())
+        result = self.solve()
+        self.assertFalse(result.hit(index).barrier)                 # the passes left the hand in front of it
+        contact = result.neck_contact
+        self.assertLess((contact.asked - asked).length, 1e-5)
+        self.assertLess((contact.shift - asked * 0.5).length, 1e-5)    # pushed straight back onto it
+        self.assertAlmostEqual(contact.moved, asked.length * 0.5, delta=1e-4)
+        self.assert_held(result, before, index, "Test Barrier holds the wrist back")
+
+    def test_held_back_entirely(self):
+        """A barrier right in front of the hand takes back the whole move: the wrist stays where the passes put
+        it. The panel still shows the contact and its gap; the overlay draws no move and gives no figure."""
+        first, before = self.contact_scene()
+        across = first.neck_contact.asked.normalized()
+        index = self.add_barrier(first, before + across * 5e-7, -across)
+        assert bpy.ops.gtr.solve_frame() == {'FINISHED'}
+        result = solver.shown_result(self.scene)
+        contact = result.neck_contact
+        self.assertEqual((contact.shift.length, contact.moved), (0.0, 0.0))
+        self.assert_held(result, before, index, "Test Barrier holds the wrist back")
+        self.assertAlmostEqual(result.neck_gap, first.neck_gap + contact.asked.length, delta=1e-4)
+        self.assertNotIn("neck contact", solver.summary(result, self.settings.magnets))
+        labels = []
+        for cls in panels.CLASSES:
+            if getattr(cls, "poll", None) is None or cls.poll(bpy.context):
+                cls.draw(SimpleNamespace(layout=FakeLayout(self, labels)), bpy.context)
+        self.assertIn("Neck contact", labels)
+        self.assertIn(f"wrist moved 0.0 cm, gap {result.neck_gap * 100.0:.1f} cm", labels)
+        self.assertFalse(any("Neck contact" in text for _, _, text, _ in overlay.build_labels(bpy.context)))
+        lines, colors, _, _ = overlay.build_geometry(bpy.context)
+        self.assertFalse(any(colors[i] == overlay.AIM_COLOR and (lines[i] - lines[i + 1]).length == 0.0
+                             for i in range(0, len(lines), 2)))
+
+    def test_collider_holds_the_wrist_back(self):
+        """A chest collider in the way pushes the target back out along its forward axis, here square against
+        the move. (The test's collider is a ball across the move: the torso's capsule pushes forward, where this
+        move does not go.)"""
+        first, before = self.contact_scene()
+        asked = first.neck_contact.asked
+        across, radius = asked.normalized(), asked.length * 0.8
+        body = collider.Capsule(before + asked * 0.5 + across * radius, (-across).to_track_quat('Z', 'Y'),
+                                0.0, 0.0, radius)
+        self.assertEqual((body.push(before), body.push(first.sides['L'].fk_wrist)), (0.0, 0.0))
+        self.assertGreater(body.push(before + asked), 0.0)
+        self.settings.collider_enabled, self.settings.collider_fingertips = True, False
+        self.settings.collider_hands = {'L'}
+        with mock.patch.object(collider, "capsule", return_value=body):
+            result = self.solve()
+        self.assertEqual(result.sides['L'].collider.weight, 0.0)    # the passes left the hand outside it
+        contact = result.neck_contact
+        self.assertLess((contact.shift - asked * 0.5).length, 1e-5)
+        self.assertAlmostEqual(contact.moved, asked.length * 0.5, delta=1e-4)
+        self.assert_held(result, before, 'COLLIDER', "the chest collider holds the wrist back")
+
+    def test_reach_clamp_keeps_the_barriers(self):
+        """The reach clamp pulls the target back toward the shoulder, into a barrier the move itself cleared: the
+        target is pushed out again, and ends within reach and clear of the barrier."""
+        self.pose_fretting()
+        found = landmarks.find(self.root)
+        neck = found["NECK_PIVOT"].matrix_world.translation.lerp(found["NUT"].matrix_world.translation, 0.5)
+        names = chain(self.obj, 'L')
+        rigs.reach(self.obj, *names, rigs.world_head(self.obj, names[0]).lerp(neck, 0.5), Vector((0.0, 0.5, -1.0)))
+        self.settings.reach_clamp = 0.5
+        cal = calibrate.load(self.cal)
+        mocap = solver.sample_arm(self.obj, build.find(self.settings).chains['L'], cal.char_frame, 0.0)
+        reach = (mocap.shoulder, 0.5 * mocap.length, (mocap.wrist - mocap.shoulder).length)
+        first = self.solve(2.0)
+        contact = first.neck_contact
+        before = first.sides['L'].target - contact.shift
+        out = before + contact.asked
+        clamped, _ = ik.reach_clamp(out, *reach)
+        self.assertLess((clamped - first.sides['L'].target).length, 1e-5)     # the clamp alone held it
+        pull = clamped - out
+        across = contact.asked.normalized()
+        side = pull - across * pull.dot(across)                 # the pull square to the move
+        self.assertGreater(side.length, 0.005)
+        # A barrier along the move, half way between the move's end and where the clamp pulls it.
+        normal = -side.normalized()
+        point = out - normal * (0.5 * side.length)
+        index = self.add_barrier(first, point, normal)
+        result = self.solve()
+        self.assertFalse(result.hit(index).barrier)                 # the passes left the hand in front of it
+        left = result.sides['L']
+        self.assertTrue(left.clamped)
+        self.assertLess((left.target - result.neck_contact.shift - before).length, 1e-5)
+        self.assertLess((left.target - mocap.shoulder).length, max(reach[1], reach[2]) + 1e-6)
+        self.assertGreater((left.target - point).dot(normal), -1e-6)    # not behind the barrier
+        self.assertGreater((left.wrist - point).dot(normal), -2e-5)
+        self.assertIn(result.neck_contact.limit, ('REACH', index))
+        self.assert_moved(result)
+
+    def test_ik_miss_is_not_blamed_on_the_barriers(self):
+        """Where the IK misses the moved target, the result reports the miss, not a barrier that took back a
+        fraction of a millimetre of the move."""
+        self.pose_fretting()
+        upper = self.obj.pose.bones[chain(self.obj, 'L')[0]]
+        upper.lock_ik_x = upper.lock_ik_y = upper.lock_ik_z = True     # the IK can only bend the elbow
+        first = self.solve(8.0)
+        contact = first.neck_contact
+        self.assertIsNone(contact.limit)
+        before, across = first.sides['L'].target - contact.shift, contact.asked.normalized()
+        self.add_barrier(first, before + contact.asked - across * 2e-4, -across)
+        result = self.solve()
+        contact = result.neck_contact
+        self.assertLess((contact.shift - (contact.asked - across * 2e-4)).length, 1e-5)
+        self.assertGreater(result.sides['L'].error, 0.001)
+        self.assertGreater(result.neck_gap - (first.neck_gap - contact.asked.length), 0.001)
+        self.assertIsNone(contact.limit)
+        texts = [text for _, text in result.messages]
+        self.assertTrue(any("The left IK misses its target" in text for text in texts), texts)
+        self.assertTrue(any("the fretting wrist moved" in text for text in texts), texts)
+        self.assertFalse(any("holds the wrist back" in text for text in texts), texts)
 
     def test_panel_and_overlay(self):
         self.pose_fretting()
@@ -729,5 +897,5 @@ class NeckContactTest(unittest.TestCase):
         self.assertIn("Neck contact", labels)
         target = result.sides['L'].target
         lines, _, _, _ = overlay.build_geometry(bpy.context)
-        self.assertTrue(any((a - (target - result.neck_contact.moved)).length < 1e-6 and (b - target).length < 1e-6
+        self.assertTrue(any((a - (target - result.neck_contact.shift)).length < 1e-6 and (b - target).length < 1e-6
                             for a, b in zip(lines[0::2], lines[1::2])))

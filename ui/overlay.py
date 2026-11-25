@@ -238,9 +238,10 @@ def _magnets(geo, context, settings, unit):
     if result.neck is not None:
         geo.line(result.neck.axis_origin, result.neck.target, AIM_COLOR)
         geo.dot(result.neck.axis_origin, AIM_COLOR)
-    if result.neck_contact is not None:
+    contact = result.neck_contact
+    if contact is not None and contact.shift.length > 0.0:
         target = result.sides[solver.FRET_SIDE].target
-        geo.line(target - result.neck_contact.moved, target, AIM_COLOR)
+        geo.line(target - contact.shift, target, AIM_COLOR)
     for side, side_result in result.sides.items():
         geo.line(side_result.fk_wrist, side_result.target, WRIST_COLOR)
         geo.dot(side_result.fk_wrist, IDLE_COLOR)
@@ -311,8 +312,8 @@ def build_labels(context):
                 'Chest collider: {moved:.1f} cm',
                 moved=moved), CONTACT_COLOR))
             line += 1
-        if side == solver.FRET_SIDE and result.neck_contact is not None:
-            moved = result.neck_contact.moved.length * result.metres_per_bu * 100.0
+        if side == solver.FRET_SIDE and result.neck_contact is not None and result.neck_contact.moved > 0.0:
+            moved = result.neck_contact.moved * result.metres_per_bu * 100.0
             labels.append((side_result.target, line, msg(
                 'Neck contact: {moved:.1f} cm',
                 moved=moved), AIM_COLOR))

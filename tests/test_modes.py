@@ -158,7 +158,7 @@ class NeckContactFadeTest(RangeBakeTest):
             self.scene.frame_set(frame)
             result = solver.solve(bpy.context, self.rig)
             contact = result.neck_contact
-            moved.append(0.0 if contact is None else contact.moved.length)
+            moved.append(0.0 if contact is None else contact.moved)
             weights.append(result.frame_mode.aim_weight)
             build.deactivate(self.settings)
         self.assertEqual((weights[0], weights[-1]), (1.0, 0.0))
