@@ -826,6 +826,33 @@ class NeckContactTest(unittest.TestCase):
         self.assertAlmostEqual(contact.moved, asked.length * 0.5, delta=1e-4)
         self.assert_held(result, before, 'COLLIDER', "the chest collider holds the wrist back")
 
+    def test_collider_and_a_barrier_that_push_against_each_other(self):
+        """The torso's capsule (no mock) pushes the moved hand forward and a barrier at the end of the move pushes
+        it straight back: the pushes cancel, and what keep_out leaves of the move is inside the collider. The target
+        stops on its way, where the collider begins, and the result says the collider held it back."""
+        first, before = self.contact_scene()
+        asked = first.neck_contact.asked
+        settings = self.settings
+        settings.collider_enabled, settings.collider_fingertips = True, False
+        settings.collider_hands = {'L'}
+        settings.collider_radius_m, settings.collider_top_m = 0.24, -0.10
+        settings.collider_bottom_m, settings.collider_depth_m = -0.30, 0.06
+        rig = build.find(settings)
+        setup = solver.prepare(bpy.context, rig)
+        body = collider.capsule(settings, setup.cal, *solver.sample_pose(bpy.context, rig, setup).chest)
+        self.assertEqual((body.push(before), body.push(first.sides['L'].fk_wrist)), (0.0, 0.0))
+        self.assertGreater(body.push(before + asked), 0.02)
+        index = self.add_barrier(first, before + asked, -body.forward)
+        result = self.solve()
+        left, contact = result.sides['L'], result.neck_contact
+        self.assertEqual(left.collider.weight, 0.0)             # the passes left the hand outside it
+        self.assertFalse(result.hit(index).barrier)
+        self.assertLess(body.push(left.target), 2e-6)
+        self.assertLess(body.push(left.wrist), 1e-5)
+        self.assertLess(contact.shift.angle(asked), 1e-4)       # on its way, short of the barrier at its end
+        self.assertLess(contact.shift.length, asked.length - 0.005)
+        self.assert_held(result, before, 'COLLIDER', "the chest collider holds the wrist back")
+
     def test_reach_clamp_keeps_the_barriers(self):
         """The reach clamp pulls the target back toward the shoulder, into a barrier the move itself cleared: the
         target is pushed out again, and ends within reach and clear of the barrier."""

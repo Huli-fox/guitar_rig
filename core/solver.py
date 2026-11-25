@@ -29,7 +29,9 @@ passes settle with the hand off the neck. Once they have, the arm covers what th
      the move is zero up to the limit, where the two aims are one, and fades with the aim weight and the magnet's;
   3. the barriers and the chest collider take back what the move took the hand into them (keep_out), and the reach
      clamp holds the target, in turns until all of them hold (contact_target): a clamp that pulls the target back
-     into a barrier is pushed out again. The hand keeps its rotation, and only the fretting arm is solved again.
+     into a barrier is pushed out again. Where they cannot all hold there (a barrier that pushes the hand back
+     into the collider), the target stops on its way at the furthest point where each does. The hand keeps its
+     rotation, and only the fretting arm is solved again.
 The guitar is not aimed at the moved hand, and no filter sees the move: an aim at the moved hand would stay within
 the limit and call the move off again, on this frame or, through a filter's state, on the next.
 What is left between the hand and the neck is measured on the solved hand (FrameResult.neck_gap, for every aimed
@@ -78,8 +80,8 @@ TOLERANCE_M = 1e-4          # a wrist this close to its target, in metres, has c
 TOLERANCE_ANGLE = math.radians(0.05)    # an aim that turns the guitar less than this has converged
 CHECK_TOLERANCE_M = 1e-3    # the rig check passes when the IK reproduces the FK elbows and wrists this closely
 CONTACT_TOLERANCE_M = 1e-3  # a hand held this much further from the neck than its neck contact asked is reported
-CLEAR_TOLERANCE_M = 1e-6    # a neck contact target that keep_out and the reach clamp move less than this, in metres,
-#                             meets them; one they leave this near where it started stays there
+CLEAR_TOLERANCE_M = 1e-6    # a neck contact target no more than this into a barrier, the collider or past the reach
+#                             clamp, in metres, meets them; one they leave this near where it started stays there
 CONTACT_ROUNDS = 16         # turns of keep_out and the reach clamp a neck contact target gets to meet both
 CONTACT_BISECTIONS = 30     # halvings that find how far toward an unmet target the neck contact can go
 SIDE_NAMES = {'L': msg("left"), 'R': msg("right")}
@@ -578,42 +580,60 @@ def contact_target(settings, solid, before, move, reach, tolerance):
     ik.reach_clamp's (shoulder, reach, fk_distance)) all let it get from `before`, which meets them all.
 
     In turns, keep_out takes back what the move took the hand into a barrier or the collider and the reach clamp
-    pulls the target toward the shoulder, until neither moves it more than `tolerance`: a target the clamp pulls
-    back into a barrier is pushed out again, and slides along what holds it. Where they do not meet in
-    CONTACT_ROUNDS turns, the target stops on its way from `before` to the last one, within reach as both ends
-    are, at the furthest point keep_out leaves where it is. A target left within `tolerance` of `before` is
-    `before`. `clamped`: the reach clamp acted; `acted`: {what: distance} each took back, what being 'REACH',
-    'COLLIDER' or a barrier's magnet index."""
+    pulls the target toward the shoulder, until the target is no more than `tolerance` into any of them, each
+    checked on its own: a target the clamp pulls back into a barrier is pushed out again, and slides along what
+    holds it. Where they do not meet in CONTACT_ROUNDS turns (a barrier that pushes the hand straight back into
+    the collider never does), the target stops on its way from `before` to the last one at the furthest point
+    that meets them all. A target left within `tolerance` of `before` is `before`. `clamped`: the reach clamp
+    acted; `acted`: {what: distance}, what being 'REACH', 'COLLIDER' or a barrier's magnet index: how far each
+    took the target back or, where it stops on its way, how far into each the next step would take it."""
     body, tips, entries = solid
     acted, clamped = {}, False
+    shoulder, limit = reach[0], max(reach[1], reach[2])
+    barriers = [entry for entry in entries if magnets.is_barrier(entry)]
+    held = {entry.index for entry in barriers if barrier_holds(settings, before, entry)}
+    allowed = {entry.index: max(magnets.barrier_depth(before, entry), 0.0) for entry in barriers}
 
-    def stays(point):
-        return keep_out(settings, body, point, tips, entries, before)[1] <= tolerance
+    def need(point):
+        return collider.push(body, point, [point + v for v in tips])[1].moved.length
+
+    inside = need(before) if body is not None else 0.0
+
+    def into(point):
+        """{what: how far} for each of them the target at `point` is more than `tolerance` into, as keep_out and
+        the reach clamp have it from `before`. Each on its own: a barrier that pushes the hand back into the
+        collider cancels the collider's push, so what keep_out moves the hand by says nothing."""
+        depths = {'REACH': (point - shoulder).length - limit}
+        if body is not None:
+            depths['COLLIDER'] = need(point) - inside
+        for entry in barriers:
+            if entry.index in held or barrier_holds(settings, point, entry):
+                depths[entry.index] = magnets.barrier_depth(point, entry) - allowed[entry.index]
+        return {what: depth for what, depth in depths.items() if depth > tolerance}
 
     point = before + move
     for _ in range(CONTACT_ROUNDS):
         pushes = []
-        point, pushed = keep_out(settings, body, point, tips, entries, before, pushes)
+        point, _ = keep_out(settings, body, point, tips, entries, before, pushes)
         for what, distance in pushes:
             acted[what] = acted.get(what, 0.0) + distance
         target, pulled = ik.reach_clamp(point, *reach)
-        pull = (target - point).length
         if pulled:
             clamped = True
-            acted['REACH'] = acted.get('REACH', 0.0) + pull
+            acted['REACH'] = acted.get('REACH', 0.0) + (target - point).length
         point = target
-        if pushed <= tolerance and pull <= tolerance:
+        if not into(point):
             break
     else:
-        if not stays(point):
-            span, near, far = point - before, 0.0, 1.0
-            for _ in range(CONTACT_BISECTIONS):
-                middle = 0.5 * (near + far)
-                if stays(before + span * middle):
-                    near = middle
-                else:
-                    far = middle
-            point = before + span * near
+        span, near, far, blocked = point - before, 0.0, 1.0, into(point)
+        for _ in range(CONTACT_BISECTIONS):
+            middle = 0.5 * (near + far)
+            found = into(before + span * middle)
+            if found:
+                far, blocked = middle, found
+            else:
+                near = middle
+        point, acted = before + span * near, blocked
     if (point - before).length <= tolerance:
         point = before.copy()
     return point, clamped, acted
