@@ -7,7 +7,8 @@ frame's FK pose is read from the same frame_set that the frame is then solved on
 passes through the magnets. Per frame:
   - the rig is switched off and the frame set, with the add-on's tracks muted, so the character plays the mocap;
   - the FK pose is solved (solver.solve_pose) with the SolveState of the previous frame: the one-euro filters
-    and the snap magnets that held each hand;
+    and the snap magnets that held each hand; the arms are read after the solve's last step, the fretting arm's
+    move to the neck where Max Swing limited the aim (the neck contact);
   - the armature-space poses of the arm chains (IK upper arm down to IK hand), of their parents and of the chest
     bone, the armature's world matrix and the solved guitar are stored.
 Then (pass 3, §8) the poses become matrix_basis values (bake.py) and keys, one per frame, in two new actions: the
@@ -309,6 +310,13 @@ class Stats:
     clamped: int = 0            # frames where the reach clamp acted
     collider: int = 0           # frames where the chest collider pushed a hand
     aim_limited: int = 0        # frames where the neck aim hit Max Swing
+    contact: int = 0            # frames where the fretting wrist moved toward the neck for it (the neck contact)
+    contact_largest: float = 0.0    # the largest of those moves, in metres
+    contact_frame: int = None
+    held: list = field(default_factory=list)    # frames where something kept the hand off the neck all the same,
+    #                                             however little the wrist moved
+    held_gap: float = 0.0       # the largest distance left between hand and neck on those frames, in metres
+    held_frame: int = None
     largest: float = 0.0        # the largest wrist correction, in metres
     largest_frame: int = None
 
@@ -322,6 +330,18 @@ class Stats:
         self.clamped += any(side.clamped for side in sides)
         self.collider += any(side.collider is not None and side.collider.weight > 0.0 for side in sides)
         self.aim_limited += result.neck is not None and result.neck.clamped
+        contact = result.neck_contact
+        if contact is not None:
+            moved = contact.moved * metres_per_bu
+            if moved > 0.0:
+                self.contact += 1
+                if moved > self.contact_largest:
+                    self.contact_largest, self.contact_frame = moved, frame
+            if contact.limit is not None:
+                self.held.append(frame)
+                gap = result.neck_gap * metres_per_bu
+                if gap > self.held_gap:
+                    self.held_gap, self.held_frame = gap, frame
         for side in sides:
             moved = (side.target - side.fk_wrist).length * metres_per_bu
             if moved > self.largest:
@@ -541,6 +561,11 @@ class BakeJob(Job):
             notes.append(msg('The reach clamp acted on {count} frames.', count=stats.clamped))
         if stats.aim_limited:
             notes.append(msg('The Max Swing limit acted on {count} frames.', count=stats.aim_limited))
+        if stats.contact:
+            notes.append(msg(
+                'The fretting wrist moved to the neck for it on {count} frames, by up to {distance:.1f} cm (frame '
+                '{frame}).',
+                count=stats.contact, distance=stats.contact_largest * 100.0, frame=stats.contact_frame))
         if notes:
             lines.append(('INFO', join(notes, " ")))
         runs = self.setup.schedule.runs(self.start, self.end)
@@ -564,6 +589,13 @@ class BakeJob(Job):
                 'The IK missed its target on {misses_count} frames ({frames}): check the arm bones for IK locks, '
                 'limits or stretch.',
                 misses_count=len(stats.misses), frames=_fmt_frames(stats.misses))))
+        if stats.held:
+            lines.append(('WARNING', msg(
+                'The fretting hand stayed off the neck on {held_count} frames ({frames}), by up to {gap:.1f} cm '
+                '(frame {frame}): the neck aim was at Max Swing, and the reach clamp, a barrier or the chest '
+                'collider held the wrist back. Raise Max Swing, or check the mount.',
+                held_count=len(stats.held), frames=_fmt_frames(stats.held), gap=stats.held_gap * 100.0,
+                frame=stats.held_frame)))
         if error > VERIFY_TOLERANCE_M:
             lines.append(('WARNING', msg(
                 'Played back, the bake is {error:.1f} mm from the solve at frame {error_frame}: something acts on'

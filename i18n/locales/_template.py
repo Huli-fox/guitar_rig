@@ -130,6 +130,10 @@ translations = {
     # ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('*', 'How far the chest collider pushed a wrist'): '',
     # ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
+    ('*', 'How far the fretting hand ended from the neck on the frames where Max Swing asked its wrist to move to it'): '',
+    # ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
+    ('*', 'How far the fretting wrist moved toward the neck where Max Swing limited the neck aim'): '',
+    # ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('*', 'How far the fretting wrist turned away from the mocap'): '',
     # ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('*', 'How far the neck aim turned the guitar from its mount'): '',
@@ -467,7 +471,7 @@ translations = {
     ('GuitarRig', '   pass-through'): '',
     # ui/panels.py:579
     ('GuitarRig', '   {name}'): '',
-    # core/solver.py:383
+    # core/solver.py:427
     ('GuitarRig', ' ({causes})'): '',
     # core/guitar_frame.py:695
     ('GuitarRig', ' Conflicting cues: {cues}.'): '',
@@ -479,7 +483,7 @@ translations = {
     ('GuitarRig', "'{name}' is mapped to both sides ({title} and its right twin)."): '',
     # core/bonemap.py:345
     ('GuitarRig', "'{name}' is used for both {first_slot} and {second_slot}."): '',
-    # core/baker.py:760
+    # core/baker.py:792
     ('GuitarRig', '. Skipped curves whose keys are not one per frame: {skipped}'): '',
     # core/prepjob.py:557
     ('GuitarRig', '. Strokes snapped: {moves}'): '',
@@ -497,7 +501,7 @@ translations = {
     ('GuitarRig', 'Add Range Override'): '',
     # ops/guitar.py:498
     ('GuitarRig', 'Added {name} at the 3D cursor.'): '',
-    # ui/panels.py:657
+    # ui/panels.py:662
     ('GuitarRig', 'After the Bake'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'Aim Filter'): '',
@@ -557,13 +561,13 @@ translations = {
     ('GuitarRig', 'Bake first'): '',
     # ops/bake.py:200
     ('GuitarRig', 'Bake first: the bake records the diagnostics'): '',
-    # core/baker.py:806
+    # core/baker.py:838
     ('GuitarRig', 'Bake first: the character has no GuitarBake strip.'): '',
-    # ui/panels.py:672
+    # ui/panels.py:677
     ('GuitarRig', 'Bake keys the arms and the guitar into GuitarBake NLA strips; correct them on the GuitarRefine layer above.'): '',
-    # ui/panels.py:687
+    # ui/panels.py:692
     ('GuitarRig', "Bake to record what the solve did on each frame: the wrist corrections, each magnet's distance and weight, the neck swing."): '',
-    # core/baker.py:529
+    # core/baker.py:549
     ('GuitarRig', 'Baked frames {start}-{end} ({count} frames) in {elapsed:.1f} s ({rate:.1f} frames/s): {keyed} arm bones and the guitar.'): '',
     # core/diagnostics.py:METRICS, ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('GuitarRig', 'Barrier Depth'): '',
@@ -607,7 +611,7 @@ translations = {
     ('GuitarRig', 'Calibrate first'): '',
     # ops/mount.py:30, ops/rig.py:15
     ('GuitarRig', 'Calibrate the character first'): '',
-    # core/prepjob.py:294, core/solver.py:398, ops/mount.py:23, rig/build.py:241
+    # core/prepjob.py:294, core/solver.py:442, ops/mount.py:23, rig/build.py:241
     ('GuitarRig', 'Calibrate the character first.'): '',
     # props.py:GTR_Calibration
     ('GuitarRig', 'Calibrated'): '',
@@ -647,7 +651,7 @@ translations = {
     ('GuitarRig', 'Chest Bone'): '',
     # core/diagnostics.py:METRICS, ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('GuitarRig', 'Chest Collider'): '',
-    # ui/overlay.py:306
+    # ui/overlay.py:311
     ('GuitarRig', 'Chest collider: {moved:.1f} cm'): '',
     # ops/rig.py:GTR_OT_clean_rig
     ('GuitarRig', 'Clean Rig'): '',
@@ -675,9 +679,9 @@ translations = {
     ('GuitarRig', 'Distance (m)'): '',
     # ops/magnets.py:GTR_OT_magnet_move
     ('GuitarRig', 'Down'): '',
-    # core/baker.py:128
+    # core/baker.py:129
     ('GuitarRig', 'Drivers on GTR_ROOT override its baked keys.'): '',
-    # core/baker.py:111
+    # core/baker.py:112
     ('GuitarRig', 'Drivers on {name} override its baked keys.'): '',
     # ui/panels.py:534
     ('GuitarRig', 'Each range solves its frames in its mode: the neck aim and the fretboard-edge magnet switch as with the mode buttons. Lower ranges win where they overlap. The neck aim fades over {fade_frames} frames at each change.'): '',
@@ -731,9 +735,9 @@ translations = {
     ('GuitarRig', 'Frame {frame}: {mode} (range {range_number})'): '',
     # ops/bake.py:238
     ('GuitarRig', 'Frame {frame}: {name} {value}.'): '',
-    # core/solver.py:390
+    # core/solver.py:434
     ('GuitarRig', 'Frame {frame}: {summary}.'): '',
-    # ui/panels.py:699
+    # ui/panels.py:704
     ('GuitarRig', 'Frame {frame}: {value}'): '',
     # core/landmarks.py:ROLES, ops/guitar.py:GTR_OT_select_landmark
     ('GuitarRig', 'Fretboard Edge'): '',
@@ -745,13 +749,13 @@ translations = {
     ('GuitarRig', 'Fretting Fingers'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'Fretting Wrist'): '',
-    # ui/panels.py:585
+    # ui/panels.py:590
     ('GuitarRig', 'Fretting wrist'): '',
     # core/mount.py:57
     ('GuitarRig', 'GTR_ROOT has a negative (mirroring) scale: use Flip X or Flip Z instead of a negative scale.'): '',
-    # core/baker.py:126
+    # core/baker.py:127
     ('GuitarRig', 'GTR_ROOT has constraints, which act on top of its baked keys.'): '',
-    # core/baker.py:122
+    # core/baker.py:123
     ('GuitarRig', 'GTR_ROOT has delta transforms: clear them (Object properties > Transform > Delta Transform) before baking.'): '',
     # ops/guitar.py:117, ops/guitar.py:527
     ('GuitarRig', 'GTR_ROOT has no meshes below it: normalise the guitar first.'): '',
@@ -800,6 +804,10 @@ translations = {
     # core/diagnostics.py:METRICS
     ('GuitarRig', 'How far the chest collider pushed a wrist'): '',
     # core/diagnostics.py:METRICS
+    ('GuitarRig', 'How far the fretting hand ended from the neck on the frames where Max Swing asked its wrist to move to it'): '',
+    # core/diagnostics.py:METRICS
+    ('GuitarRig', 'How far the fretting wrist moved toward the neck where Max Swing limited the neck aim'): '',
+    # core/diagnostics.py:METRICS
     ('GuitarRig', 'How far the fretting wrist turned away from the mocap'): '',
     # core/diagnostics.py:METRICS
     ('GuitarRig', 'How far the neck aim turned the guitar from its mount'): '',
@@ -831,7 +839,7 @@ translations = {
     ('GuitarRig', 'Joint Margin'): '',
     # ops/bake.py:GTR_OT_jump_worst_frame
     ('GuitarRig', 'Jump to Worst Frame'): '',
-    # core/baker.py:980
+    # core/baker.py:1012
     ('GuitarRig', 'Kept the refine actions with your keys ({names}) with a fake user.'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'Keys'): '',
@@ -921,7 +929,7 @@ translations = {
     ('GuitarRig', 'Load a preset for a first estimate, or pose the guitar on the character (move and rotate GTR_ROOT) and capture it.'): '',
     # ops/mount.py:36, ops/rig.py:35
     ('GuitarRig', 'Load a preset or capture the mount first'): '',
-    # core/solver.py:585
+    # core/solver.py:733
     ('GuitarRig', 'Load a preset or capture the mount first.'): '',
     # ui/panels.py:159
     ('GuitarRig', 'Load a preset to place the landmarks, or Auto-Place them on the neck and body the add-on finds, then check them on the guitar.'): '',
@@ -939,7 +947,7 @@ translations = {
     ('GuitarRig', "Magnet 3 uses SAO's offset_fingertip (v1), which min.js runs through the same code as v2: it is fingertip v2 without push-only."): '',
     # presets/ukulele.json
     ('GuitarRig', 'Magnet 6, the nut barrier, is only in the ukulele scene: its neck is short enough for the fretting hand to slide past the nut.'): '',
-    # core/solver.py:142
+    # core/solver.py:167
     ('GuitarRig', 'Magnet {name} is missing a landmark and was skipped.'): '',
     # core/presets.py:325
     ('GuitarRig', 'Magnet {name}: there is no {landmark} landmark.'): '',
@@ -973,7 +981,7 @@ translations = {
     ('GuitarRig', 'Mixamo'): '',
     # props.py:GTR_RangeOverride, props.py:GTR_Settings, ui/panels.py:565
     ('GuitarRig', 'Mode'): '',
-    # core/baker.py:553
+    # core/baker.py:578
     ('GuitarRig', 'Modes: {ranges} (* range override). The filters restarted at the {changes} changes, where the neck aim fades over {fade_frames} frames.'): '',
     # ops/guitar.py:GTR_OT_load_preset, ops/guitar.py:GTR_OT_load_preset_file, props.py:GTR_Settings, ui/panels.py:334
     ('GuitarRig', 'Mount'): '',
@@ -995,12 +1003,20 @@ translations = {
     ('GuitarRig', 'Neck'): '',
     # props.py:GTR_Settings, ui/panels.py:351
     ('GuitarRig', 'Neck Aim'): '',
+    # core/diagnostics.py:METRICS, ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
+    ('GuitarRig', 'Neck Contact'): '',
     # props.py:GTR_Guitar
     ('GuitarRig', 'Neck Found'): '',
+    # core/diagnostics.py:METRICS, ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
+    ('GuitarRig', 'Neck Gap'): '',
     # core/landmarks.py:ROLES, ops/guitar.py:GTR_OT_select_landmark
     ('GuitarRig', 'Neck Pivot'): '',
     # core/diagnostics.py:METRICS, ops/bake.py:GTR_OT_jump_worst_frame, props.py:GTR_Settings
     ('GuitarRig', 'Neck Swing'): '',
+    # ui/panels.py:585
+    ('GuitarRig', 'Neck contact'): '',
+    # ui/overlay.py:317
+    ('GuitarRig', 'Neck contact: {moved:.1f} cm'): '',
     # core/landmarks.py:ROLES
     ('GuitarRig', 'Neck end of the strum line (SAO magnet 0)'): '',
     # ui/panels.py:582
@@ -1015,13 +1031,13 @@ translations = {
     ('GuitarRig', 'No body was found under the neck: the Neck/Body Barrier and the strum line are placed from where the neck narrows. Check them.'): '',
     # core/calibrate.py:261
     ('GuitarRig', 'No finger bones on the {hand_name} hand: fingertip v2 is off there and only the palm margin applies.'): '',
-    # ui/panels.py:696
+    # ui/panels.py:701
     ('GuitarRig', 'No frame has any {measure}'): '',
     # ops/bake.py:231
     ('GuitarRig', 'No frame of the bake has a {name} above 0.'): '',
-    # core/baker.py:946
+    # core/baker.py:978
     ('GuitarRig', 'No frame of {first}-{last} needed a re-clamp (tolerance {tolerance:.1f} mm).'): '',
-    # core/baker.py:948
+    # core/baker.py:980
     ('GuitarRig', 'No frames to re-clamp.'): '',
     # core/bonemap.py:259
     ('GuitarRig', "No humanoid chest bone found: the guitar will mount on '{bone}'. Check Chest (Mount), and capture the mount again if you change it."): '',
@@ -1051,11 +1067,11 @@ translations = {
     ('GuitarRig', "Normal +Z: the picking hand's fingertips stay above it (SAO magnet 2)"): '',
     # ops/guitar.py:GTR_OT_normalize_frame
     ('GuitarRig', 'Normalise Frame'): '',
-    # ui/panels.py:323, ui/panels.py:498, ui/panels.py:622
+    # ui/panels.py:323, ui/panels.py:498, ui/panels.py:627
     ('GuitarRig', 'Normalise the guitar and calibrate first'): '',
     # ops/guitar.py:155, ops/mount.py:33, ops/rig.py:32
     ('GuitarRig', 'Normalise the guitar first'): '',
-    # core/solver.py:583, ops/mount.py:20
+    # core/solver.py:731, ops/mount.py:20
     ('GuitarRig', 'Normalise the guitar first.'): '',
     # props.py:GTR_Guitar
     ('GuitarRig', 'Not Placed'): '',
@@ -1075,9 +1091,9 @@ translations = {
     ('GuitarRig', 'Offset (m)'): '',
     # props.py:GTR_Magnet
     ('GuitarRig', 'One Euro'): '',
-    # props.py:GTR_Settings, ui/panels.py:641
+    # props.py:GTR_Settings, ui/panels.py:646
     ('GuitarRig', 'One Euro Magnets'): '',
-    # ui/panels.py:647
+    # ui/panels.py:652
     ('GuitarRig', "One-euro filters: minimum cutoff (Hz), beta and derivative cutoff (Hz), with SAO's values by default. Lower cutoffs smooth more and lag more."): '',
     # ops/bake.py:232
     ('GuitarRig', 'Only {ranked_count} frames have a {name} above 0.'): '',
@@ -1101,7 +1117,7 @@ translations = {
     ('GuitarRig', 'Pass-Through'): '',
     # ui/panels.py:458
     ('GuitarRig', 'Pass-Through ({hands})'): '',
-    # ui/panels.py:591
+    # ui/panels.py:596
     ('GuitarRig', 'Passes'): '',
     # props.py:GTR_Magnet
     ('GuitarRig', 'Peak (m)'): '',
@@ -1127,9 +1143,9 @@ translations = {
     ('GuitarRig', 'Plane'): '',
     # core/landmarks.py:ROLES
     ('GuitarRig', 'Plane through the lower fretboard edge, normal +Y: the fretting hand stays above it (SAO magnet 5)'): '',
-    # core/baker.py:573
+    # core/baker.py:605
     ('GuitarRig', 'Played back within {error:.2f} mm of the solve.'): '',
-    # core/baker.py:568
+    # core/baker.py:600
     ('GuitarRig', 'Played back, the bake is {error:.1f} mm from the solve at frame {error_frame}: something acts on top of the keys (constraints, drivers, other NLA tracks above the bake).'): '',
     # presets/acoustic.json
     ('GuitarRig', "Positions are SAO's, in GLB units of the acoustic_guitar prop; placement.scale 0.088 makes 1 unit 0.008 m."): '',
@@ -1179,9 +1195,9 @@ translations = {
     ('GuitarRig', 'Re-clamp'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'Re-clamp Tolerance (m)'): '',
-    # core/baker.py:770
+    # core/baker.py:802
     ('GuitarRig', 'Re-clamp restores the contacts that smoothing loosened.'): '',
-    # core/baker.py:951
+    # core/baker.py:983
     ('GuitarRig', 'Re-clamped {frames_count} frames: the left hand on {left_count}, the right hand on {right_count}. The deepest was {depth:.1f} mm ({side} hand, frame {frame}).'): '',
     # ui/panels.py:417
     ('GuitarRig', 'Reach'): '',
@@ -1201,7 +1217,7 @@ translations = {
     ('GuitarRig', 'Remove Prep'): '',
     # ops/rig.py:GTR_OT_range_remove
     ('GuitarRig', 'Remove Range Override'): '',
-    # core/baker.py:978
+    # core/baker.py:1010
     ('GuitarRig', 'Removed the bake. Actions removed: {count}.'): '',
     # ops/rig.py:92
     ('GuitarRig', 'Removed the helper rig.'): '',
@@ -1287,7 +1303,7 @@ translations = {
     ('GuitarRig', 'Roll: the {side} twist bone turns {low:.0f}° to {high:.0f}° (1st to 99th percentile); the hand keeps its pose.'): '',
     # props.py:GTR_Magnet, ui/panels.py:337, ui/panels.py:372
     ('GuitarRig', 'Rotation'): '',
-    # props.py:GTR_Settings, ui/panels.py:643
+    # props.py:GTR_Settings, ui/panels.py:648
     ('GuitarRig', 'Rotation Magnets'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'SAO Default'): '',
@@ -1333,13 +1349,13 @@ translations = {
     ('GuitarRig', 'Smallest Stroke'): '',
     # ops/bake.py:GTR_OT_smooth_bake, props.py:GTR_Settings
     ('GuitarRig', 'Smooth'): '',
-    # core/baker.py:751
+    # core/baker.py:783
     ('GuitarRig', "Smoothed the solve's correction on {smoothed} arm curves at {cutoff:g} Hz"): '',
-    # core/baker.py:755
+    # core/baker.py:787
     ('GuitarRig', 'Smoothed {smoothed} arm curves at {cutoff:g} Hz'): '',
-    # core/baker.py:755
+    # core/baker.py:787
     ('GuitarRig', 'Smoothed {smoothed} guitar curves at {cutoff:g} Hz'): '',
-    # core/baker.py:768
+    # core/baker.py:800
     ('GuitarRig', "Smoothing the arm keys also smooths away the prep's quick motion: use Smooth Correction to keep it."): '',
     # ui/panels.py:276
     ('GuitarRig', 'Snap'): '',
@@ -1347,7 +1363,7 @@ translations = {
     ('GuitarRig', 'Solve'): '',
     # ops/rig.py:GTR_OT_solve_frame
     ('GuitarRig', 'Solve Frame'): '',
-    # ui/panels.py:600
+    # ui/panels.py:605
     ('GuitarRig', 'Solve Frame shows the solved arms until the frame changes.'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'Solve Serial'): '',
@@ -1385,13 +1401,13 @@ translations = {
     ('GuitarRig', 'Switch to Object Mode first'): '',
     # ops/mount.py:39, ops/prep.py:38, ops/rig.py:18
     ('GuitarRig', 'Switch to Object or Pose Mode first'): '',
-    # core/baker.py:353
+    # core/baker.py:373
     ('GuitarRig', 'The GuitarPrep layer is muted (Show Original): the bake read the mocap without the prep.'): '',
-    # core/baker.py:563
+    # core/baker.py:588
     ('GuitarRig', 'The IK missed its target on {misses_count} frames ({frames}): check the arm bones for IK locks, limits or stretch.'): '',
-    # core/baker.py:543
+    # core/baker.py:563
     ('GuitarRig', 'The Max Swing limit acted on {count} frames.'): '',
-    # core/baker.py:746
+    # core/baker.py:778
     ('GuitarRig', 'The arm cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed'): '',
     # core/calibrate.py:173
     ('GuitarRig', 'The armature object has a mirroring (negative) scale; rotations may be wrong.'): '',
@@ -1399,7 +1415,7 @@ translations = {
     ('GuitarRig', 'The armature object has a non-uniform scale; apply it for reliable rotations.'): '',
     # rig/build.py:243
     ('GuitarRig', 'The armature uses the iTaSC IK solver: switch it to Standard (Armature properties > Inverse Kinematics).'): '',
-    # ui/panels.py:597
+    # ui/panels.py:602
     ('GuitarRig', 'The arms show a solve whose details were lost (undo or reload): solve the frame again, or show the mocap.'): '',
     # ops/guitar.py:161, ops/guitar.py:191
     ('GuitarRig', 'The bake animates GTR_ROOT: remove the bake first'): '',
@@ -1415,17 +1431,27 @@ translations = {
     ('GuitarRig', 'The body is short next to the neck: check the strum line.'): '',
     # core/calibrate.py:238
     ('GuitarRig', "The character is {height:.2f} m tall. GuitarRig works in metres: check the object scale and the scene's unit scale."): '',
-    # core/mount.py:28, core/prepjob.py:128, core/solver.py:588
+    # core/mount.py:28, core/prepjob.py:128, core/solver.py:736
     ('GuitarRig', 'The chest bone is not mapped, or not in the armature.'): '',
-    # core/baker.py:539
+    # core/baker.py:559
     ('GuitarRig', 'The chest collider acted on {count} frames.'): '',
     # ui/panels.py:428
     ('GuitarRig', 'The filter acts from frame to frame when baking: Solve Frame shows a frame unfiltered.'): '',
-    # core/baker.py:342, core/prepjob.py:310
+    # core/baker.py:362, core/prepjob.py:310
     ('GuitarRig', 'The frame range is empty.'): '',
+    # core/solver.py:701
+    ('GuitarRig', 'The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), and the arm cannot reach further.'): '',
+    # core/solver.py:704
+    ('GuitarRig', 'The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), and the chest collider holds the wrist back.'): '',
+    # core/solver.py:706
+    ('GuitarRig', 'The fretting hand is {gap:.1f} cm from the neck: the neck aim is at Max Swing ({limit:.0f}°), and {name} holds the wrist back.'): '',
+    # core/baker.py:593
+    ('GuitarRig', 'The fretting hand stayed off the neck on {held_count} frames ({frames}), by up to {gap:.1f} cm (frame {frame}): the neck aim was at Max Swing, and the reach clamp, a barrier or the chest collider held the wrist back. Raise Max Swing, or check the mount.'): '',
+    # core/baker.py:565
+    ('GuitarRig', 'The fretting wrist moved to the neck for it on {count} frames, by up to {distance:.1f} cm (frame {frame}).'): '',
     # ui/panels.py:376
     ('GuitarRig', 'The fretting wrist turns Wrist Blend of the way from the mocap to this rotation on the guitar. To set it, pose the hand on the neck and capture it.'): '',
-    # core/baker.py:746
+    # core/baker.py:778
     ('GuitarRig', 'The guitar cutoff, {cutoff:g} Hz, is above what {fps:g} frames/s can show: nothing changed'): '',
     # core/autoland.py:139
     ('GuitarRig', 'The guitar frame has low confidence: check its axes first.'): '',
@@ -1445,7 +1471,7 @@ translations = {
     ('GuitarRig', 'The index fingers sit behind the ring fingers relative to the detected facing (Z): left and right may be swapped in the bone map. Check the overlay, and use Flip Facing if the frame is wrong.'): '',
     # core/prepjob.py:591
     ('GuitarRig', 'The joint clamp held the {side} fingers on {hit_count} frames ({frames}).'): '',
-    # core/baker.py:535
+    # core/baker.py:555
     ('GuitarRig', 'The largest wrist correction was {distance:.1f} cm (frame {frame}).'): '',
     # ui/panels.py:467
     ('GuitarRig', "The magnets act on the slow part of these wrists' path, and the quick strokes ride on top, kept out of the barriers. Without it, a strum-line magnet takes back most of a stroke."): '',
@@ -1455,13 +1481,15 @@ translations = {
     ('GuitarRig', 'The meshes have no faces to measure.'): '',
     # presets/acoustic.json, presets/bass.json, presets/strat.json, presets/ukulele.json
     ('GuitarRig', 'The mount is only a starting guess: pose the guitar on the character and use Capture Mount.'): '',
-    # core/baker.py:558
+    # core/baker.py:583
     ('GuitarRig', 'The neck aim did not settle on {unconverged_count} frames ({frames}): raise Iterations or lower Relax.'): '',
-    # core/solver.py:726
+    # core/solver.py:911
     ('GuitarRig', 'The neck aim had not settled after {count} iterations: raise Iterations, or lower Relax if the guitar oscillates.'): '',
-    # core/solver.py:722
+    # core/solver.py:900
     ('GuitarRig', 'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting hand is far from the neck.'): '',
-    # core/solver.py:598
+    # core/solver.py:904
+    ('GuitarRig', 'The neck aim was limited to {limit:.0f}° (Max Swing): the fretting wrist moved {distance:.1f} cm to the neck instead.'): '',
+    # core/solver.py:746
     ('GuitarRig', 'The neck is not aimed: the Neck Pivot or Nut landmark is missing.'): '',
     # core/autoland.py:126
     ('GuitarRig', 'The neck or the body has no length along X: check the guitar frame (Flip X).'): '',
@@ -1479,7 +1507,7 @@ translations = {
     ('GuitarRig', 'The preset {name} is malformed: {detail}.'): '',
     # core/presets.py:143
     ('GuitarRig', 'The preset {name} is not valid JSON: {reason}.'): '',
-    # core/baker.py:541
+    # core/baker.py:561
     ('GuitarRig', 'The reach clamp acted on {count} frames.'): '',
     # ops/mount.py:109
     ('GuitarRig', 'The rig or bone map changed since calibration: calibrate again, then capture the mount again.'): '',
@@ -1497,7 +1525,7 @@ translations = {
     ('GuitarRig', 'The shoulder line is parallel to the hips-to-head line in rest pose.'): '',
     # core/guitar_frame.py:700
     ('GuitarRig', 'The string face could not be told from the geometry: check that +Z points out of the strings, and use Flip Z if not.'): '',
-    # core/solver.py:717
+    # core/solver.py:893
     ('GuitarRig', 'The {name} IK misses its target by {error:.1f} mm: check the arm bones for IK locks, limits or stretch.'): '',
     # core/prepjob.py:561
     ('GuitarRig', 'The {name} elbow was too straight to swing on {count} frames ({frames}): only the shoulder turned.'): '',
@@ -1513,7 +1541,7 @@ translations = {
     ('GuitarRig', 'The {name} preset is not verified against its source: check it.'): '',
     # core/autoland.py:118
     ('GuitarRig', "The {name} preset was saved without its guitar's heel: the Neck/Body Barrier and the strum line are placed from where the neck narrows. Check them, or save the preset again."): '',
-    # core/solver.py:712
+    # core/solver.py:888
     ('GuitarRig', "The {name} wrist target was out of reach: it was kept within {reach_clamp:.1%} of the arm length, or the mocap wrist's distance if that is further."): '',
     # core/prepjob.py:534
     ('GuitarRig', "The {name} wrist's travel above {cutoff:g} Hz: {before:.1f} → {after:.1f} cm RMS (99th percentile {peak_before:.1f} → {peak_after:.1f} cm)"): '',
@@ -1523,7 +1551,7 @@ translations = {
     ('GuitarRig', 'The {side_name} IK forearm is not below the IK upper arm: check the bone map.'): '',
     # rig/build.py:203
     ('GuitarRig', 'The {side_name} IK hand is not below the IK forearm, so the IK would not move it: check the bone map.'): '',
-    # core/solver.py:789
+    # core/solver.py:974
     ('GuitarRig', 'The {side} IK does not reproduce the current pose: the elbow is {elbow:.1f} mm and the wrist {wrist:.1f} mm off. Check the arm bones for IK locks, limits or stretch.'): '',
     # rig/build.py:263
     ('GuitarRig', 'The {side} arm has its own IK ({constraints}): mute it while you solve, or the pole target is ignored.'): '',
@@ -1541,7 +1569,7 @@ translations = {
     ('GuitarRig', 'There are no landmarks to save.'): '',
     # ops/bake.py:184
     ('GuitarRig', 'There is no bake'): '',
-    # core/baker.py:682
+    # core/baker.py:714
     ('GuitarRig', 'There is no bake to smooth.'): '',
     # ops/rig.py:86
     ('GuitarRig', 'There is no helper rig'): '',
@@ -1627,9 +1655,9 @@ translations = {
     ('GuitarRig', 'bounds'): '',
     # props.py:GTR_Character
     ('GuitarRig', 'calibration'): '',
-    # core/solver.py:379
+    # core/solver.py:419
     ('GuitarRig', 'chest collider {distance:.1f} cm'): '',
-    # core/solver.py:375, ui/overlay.py:313, ui/panels.py:421, ui/panels.py:580
+    # core/solver.py:415, ui/overlay.py:324, ui/panels.py:421, ui/panels.py:580
     ('GuitarRig', 'clamp'): '',
     # ops/guitar.py:GTR_OT_load_preset_file, ops/guitar.py:GTR_OT_save_preset
     ('GuitarRig', 'filter_glob'): '',
@@ -1651,7 +1679,7 @@ translations = {
     ('GuitarRig', 'index.js'): '',
     # props.py:GTR_Guitar
     ('GuitarRig', 'landmark_messages'): '',
-    # core/calibrate.py:260, core/solver.py:61, rig/build.py:32
+    # core/calibrate.py:260, core/solver.py:85, rig/build.py:32
     ('GuitarRig', 'left'): '',
     # core/guitar_frame.py:41
     ('GuitarRig', 'low'): '',
@@ -1671,9 +1699,11 @@ translations = {
     ('GuitarRig', 'moved {moved:.1f} cm, reach clamped'): '',
     # ops/guitar.py:345
     ('GuitarRig', 'neck'): '',
+    # core/solver.py:423
+    ('GuitarRig', 'neck contact {distance:.1f} cm'): '',
     # core/guitar_frame.py:CUE_TITLES
     ('GuitarRig', 'neck position'): '',
-    # core/solver.py:385
+    # core/solver.py:429
     ('GuitarRig', 'neck swung {angle:.1f}°'): '',
     # core/bonemap.py:106
     ('GuitarRig', 'no match'): '',
@@ -1681,25 +1711,27 @@ translations = {
     ('GuitarRig', 'prep'): '',
     # props.py:GTR_Settings
     ('GuitarRig', 'range_overrides'): '',
-    # core/calibrate.py:260, core/solver.py:61, rig/build.py:32
+    # core/calibrate.py:260, core/solver.py:85, rig/build.py:32
     ('GuitarRig', 'right'): '',
     # core/guitar_frame.py:CUE_TITLES
     ('GuitarRig', 'strings'): '',
-    # ui/panels.py:588
+    # ui/panels.py:593
     ('GuitarRig', 'turned {angle:.1f}°'): '',
-    # ui/panels.py:585
+    # ui/panels.py:590
     ('GuitarRig', 'turned {angle:.1f}°, yaw constrained'): '',
     # ui/panels.py:421, ui/panels.py:580
     ('GuitarRig', 'weight {weight:.2f}'): '',
+    # ui/panels.py:585
+    ('GuitarRig', 'wrist moved {moved:.1f} cm, gap {gap:.1f} cm'): '',
     # ui/panels.py:582
     ('GuitarRig', '{angle:.1f}°, limited'): '',
     # ui/panels.py:227
     ('GuitarRig', '{arm_len:.3f} m  ×{ratio_arm:.3f}'): '',
     # ops/guitar.py:283
     ('GuitarRig', '{axis} flipped by hand.'): '',
-    # core/diagnostics.py:233
+    # core/diagnostics.py:252
     ('GuitarRig', '{count:.0f} passes'): '',
-    # ui/panels.py:591
+    # ui/panels.py:596
     ('GuitarRig', '{count}, not settled'): '',
     # ui/panels.py:574
     ('GuitarRig', '{distance:.1f} cm'): '',
@@ -1707,9 +1739,9 @@ translations = {
     ('GuitarRig', '{distance:.1f} cm away, {state}'): '',
     # core/calibrate.py:268
     ('GuitarRig', '{estimated} fingertip(s) estimated from the finger joints because the bone tails look unreliable.'): '',
-    # core/baker.py:548
+    # core/baker.py:573
     ('GuitarRig', '{first}-{last} {mode}'): '',
-    # core/baker.py:299
+    # core/baker.py:300
     ('GuitarRig', '{frames} and {count} more'): '',
     # ui/panels.py:226
     ('GuitarRig', '{height:.3f} m'): '',
@@ -1727,19 +1759,19 @@ translations = {
     ('GuitarRig', '{method}  ×{length:.2f} ×{width:.2f} ×{depth:.2f}'): '',
     # ui/panels.py:564
     ('GuitarRig', '{mode} (range {range_number})'): '',
-    # core/baker.py:106
+    # core/baker.py:107
     ('GuitarRig', "{name} has constraints ({constraints}) that act on top of the baked keys: the baked arm will differ from the solve. Mute them, or bake the rig's FK controls."): '',
     # ops/guitar.py:500
     ('GuitarRig', '{name} is hidden or in an excluded collection.'): '',
     # ops/bake.py:262
     ('GuitarRig', '{name} is hidden or in an excluded collection: unhide it to see its curves.'): '',
-    # core/baker.py:285
+    # core/baker.py:286
     ('GuitarRig', '{name} is in NLA tweak mode: leave it in the NLA editor first.'): '',
-    # core/solver.py:373
+    # core/solver.py:413
     ('GuitarRig', '{name} {state}'): '',
-    # ui/panels.py:706
+    # ui/panels.py:711
     ('GuitarRig', "{name}'s curves hold every frame: each wrist's correction (cm) and IK miss (mm), each magnet's distance d (cm, negative behind a plane) and weight w, the neck swing and the fretting wrist's turn (°). They show the solve, before any Smooth or Re-clamp."): '',
-    # ui/overlay.py:315
+    # ui/overlay.py:326
     ('GuitarRig', '{name}: {state}'): '',
     # ops/bake.py:69
     ('GuitarRig', '{operation} cancelled at frame {frame}: nothing was changed.'): '',
@@ -1757,9 +1789,9 @@ translations = {
     ('GuitarRig', "{side_name} IK chain: '{name}' is not below '{name2}'."): '',
     # core/bonemap.py:326
     ('GuitarRig', "{side_name} IK hand '{name}' is not below the IK forearm '{name2}'."): '',
-    # core/solver.py:382
+    # core/solver.py:426
     ('GuitarRig', '{side} wrist moved {moved:.1f} cm'): '',
-    # core/solver.py:387
+    # core/solver.py:431
     ('GuitarRig', '{side} wrist turned {angle:.1f}°'): '',
     # ui/panels.py:231
     ('GuitarRig', '{spine_len:.3f} m  ×{ratio_spine:.3f}'): '',

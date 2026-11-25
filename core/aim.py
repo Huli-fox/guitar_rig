@@ -19,6 +19,11 @@ scaled before the rotation, which for the uniform scale SAO's props have is its 
 When a fingertip magnet on the fretting hand acts (min.js, Tt), SAO moves `a` and `p` along that magnet's plane
 normal by -E·w, where E is the magnet's fingertip shift and w its weight: the aimed axis then runs at the
 height the fingertips hold the hand point above the fretboard. `aim_shift` gives that move in GTR_ROOT space.
+
+The aim leaves the target a little off the line through `a` and `p` (the swung neck point is as far from the pivot
+as the target is, not from the guitar origin), and `max_swing` leaves it further off. `axis_foot` measures that
+distance for any rotation of the guitar, `limit_gap` how much of it is the limit's doing, and `limit_move` is the
+move across the neck that covers that much: what the solver has the arm do (solver.py, neck contact).
 """
 
 import math
@@ -90,6 +95,39 @@ def aim(guitar, a, p, target, max_swing=None, weight=1.0):
     ref = direction.normalized() * (target - axis_origin).length + axis_origin - origin
     swing, angle, clamped = swing_rotation(ref, target - origin, max_swing, weight)
     return Aim((swing @ q_def).normalized(), angle, clamped, axis_origin, target.copy())
+
+
+def axis_foot(guitar, rotation, a, p, point):
+    """(foot, distance): the point nearest the world point `point` on the line through the neck axis ends `a` and
+    `p` (GTR_ROOT space) of `guitar` turned to `rotation`, and how far from `point` it is. The line goes on past
+    its ends, as the aim's does: a hand beyond the nut is aimed at as well."""
+    start = guitar.location + rotation @ (Vector(a) * guitar.scale)
+    along = rotation @ ((Vector(p) - Vector(a)) * guitar.scale)
+    if along.length_squared < 1e-24:
+        return start, (point - start).length
+    foot = start + along * ((point - start).dot(along) / along.length_squared)
+    return foot, (point - foot).length
+
+
+def limit_gap(guitar, a, p, target, max_swing, weight=1.0):
+    """How much further from the aimed neck axis `max_swing` leaves `target`: its distance from the axis of the
+    guitar aimed with the limit, less its distance aimed without (0 if that is not less). Both aims have `weight`,
+    so this is 0 up to the limit and at weight 0, and grows from there without a step."""
+    limited = aim(guitar, a, p, target, max_swing, weight)
+    free = aim(guitar, a, p, target, None, weight)
+    return max(axis_foot(guitar, limited.rotation, a, p, target)[1]
+               - axis_foot(guitar, free.rotation, a, p, target)[1], 0.0)
+
+
+def limit_move(guitar, rotation, a, p, target, max_swing, weight=1.0):
+    """The move that takes `target` straight toward the neck axis of `guitar` turned to `rotation` (the guitar as
+    it is shown) by what `max_swing` left between them (limit_gap), at most onto that axis. It is square to the
+    axis, so the target keeps its place along the neck."""
+    foot, gap = axis_foot(guitar, rotation, a, p, target)
+    extra = min(limit_gap(guitar, a, p, target, max_swing, weight), gap)
+    if extra <= 0.0:
+        return Vector((0.0, 0.0, 0.0))
+    return (foot - target) * (extra / gap)
 
 
 def aim_shift(normal_local, shift_world, scale):

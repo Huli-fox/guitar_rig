@@ -581,6 +581,11 @@ class GTR_PT_solve(_SubPanel, bpy.types.Panel):
             if result.neck is not None:
                 rows.append((mark('Neck swing'), msg("{angle:.1f}°, limited", angle=math.degrees(result.swing))
                              if result.neck.clamped else f"{math.degrees(result.swing):.1f}°"))
+            if result.neck_contact is not None:
+                rows.append((mark('Neck contact'), msg(
+                    'wrist moved {moved:.1f} cm, gap {gap:.1f} cm',
+                    moved=result.neck_contact.moved * result.metres_per_bu * 100.0,
+                    gap=result.neck_gap * result.metres_per_bu * 100.0)))
             if result.wrist_turn > 0.0:
                 rows.append((mark('Fretting wrist'), msg(
                     'turned {angle:.1f}°, yaw constrained',

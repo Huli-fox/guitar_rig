@@ -1,3 +1,4 @@
+import math
 import unittest
 from types import SimpleNamespace
 
@@ -137,3 +138,33 @@ class RangeBakeTest(BakeTest):
                                       "active_range_index")
         self.assertEqual(bpy.ops.gtr.range_remove(), {'FINISHED'})
         self.assertEqual(len(self.settings.range_overrides), 0)
+
+
+class NeckContactFadeTest(RangeBakeTest):
+    test_solve_frame_follows_the_range = test_bake_plays_the_solve = None
+    test_filters_restart_at_a_change = test_operators_and_panel = None
+
+    def test_contact_fades_with_the_aim(self):
+        """Into an Align range the neck aim fades out over a few frames, and the neck contact with it: no step."""
+        from test_follow import FollowSolveTest
+        self.cal = self.obj.gtr_char.calibration
+        FollowSolveTest.pose_fretting(self)                     # a pose held on every frame
+        self.settings.aim_max_swing = math.radians(8.0)
+        # Without the edge magnet, which snaps in Align, the two modes differ in the neck aim alone.
+        next(m for m in self.settings.magnets if m.preset_id == "FRETBOARD_EDGE").enabled = False
+        self.add_range(4, 20)
+        moved, weights = [], []
+        for frame in range(1, 12):
+            self.scene.frame_set(frame)
+            result = solver.solve(bpy.context, self.rig)
+            contact = result.neck_contact
+            moved.append(0.0 if contact is None else contact.moved)
+            weights.append(result.frame_mode.aim_weight)
+            build.deactivate(self.settings)
+        self.assertEqual((weights[0], weights[-1]), (1.0, 0.0))
+        self.assertGreater(moved[0], 0.04)
+        self.assertEqual(moved[-1], 0.0)
+        self.assertEqual(moved, sorted(moved, reverse=True))
+        steps = sum(1 for one, other in zip(weights, weights[1:]) if one != other)
+        self.assertGreaterEqual(steps, 4)
+        self.assertLess(max(one - other for one, other in zip(moved, moved[1:])), 2.0 * moved[0] / steps, moved)

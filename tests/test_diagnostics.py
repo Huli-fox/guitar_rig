@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import bpy
 import numpy as np
+from mathutils import Quaternion, Vector
 
-from guitar_rig.core import diagnostics, keys, solver
+from guitar_rig.core import diagnostics, keys, magnets, solver
 from guitar_rig.rig import build
 from guitar_rig.ui import panels
 from test_addon import FakeLayout
@@ -129,3 +130,69 @@ class DiagnosticsBakeTest(BakeTest):
         self.assertIn("No frame has any Chest Collider", draw())
         self.assertEqual(bpy.ops.gtr.show_diagnostics(), {'FINISHED'})
         self.assertIs(bpy.context.view_layer.objects.active, diagnostics.find(self.settings))
+
+
+class NeckContactDiagnosticsTest(BakeTest):
+    curves = DiagnosticsBakeTest.curves
+
+    def test_curves_and_ranking(self):
+        frames = range(1, 7)
+        animate(self.obj, self.root, frames=frames)
+        plain(self.settings)
+        self.settings.aim_max_swing = np.radians(8.0)
+        self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
+        curves = self.curves()
+        moved, gaps = curves["neck contact (cm)"][1], curves["neck gap (cm)"][1]
+        self.assertGreater(moved.max(), 1.0)
+        self.assertEqual(moved.min(), 0.0)
+        for i, frame in enumerate(frames):
+            self.scene.frame_set(frame)
+            result = solver.solve(bpy.context, self.rig)
+            build.deactivate(self.settings)
+            cm = 100.0 * result.metres_per_bu
+            contact = result.neck_contact
+            self.assertAlmostEqual(moved[i], 0.0 if contact is None else contact.moved * cm, places=3)
+            self.assertAlmostEqual(gaps[i], result.neck_gap * cm, places=3)
+        ranked = diagnostics.ranking(diagnostics.find(self.settings), 'NECK_CONTACT')
+        self.assertEqual(ranked[0][0], frames[int(moved.argmax())])
+        self.assertAlmostEqual(ranked[0][1], moved.max(), places=4)
+
+    def test_scores(self):
+        frames = np.array((1.0, 2.0, 3.0, 4.0))
+        nan = np.nan
+        curves = {
+            "neck contact asked (cm)": ({"kind": 'NECK_ASKED', "side": "", "barrier": 0},
+                                        np.array((0.0, 5.0, 2.0, 20.0))),
+            "neck contact (cm)": ({"kind": 'NECK_CONTACT', "side": "", "barrier": 0}, np.array((0.0, 5.0, 2.0, 0.0))),
+            "neck gap (cm)": ({"kind": 'NECK_GAP', "side": "", "barrier": 0}, np.array((9.0, 0.3, 1.5, 20.0))),
+        }
+        np.testing.assert_allclose(diagnostics.scores(frames, curves, 'NECK_CONTACT'), (0.0, 5.0, 2.0, 0.0))
+        # Where the move was asked for, though on frame 4 something held the wrist back entirely.
+        np.testing.assert_allclose(diagnostics.scores(frames, curves, 'NECK_GAP'), (0.0, 0.3, 1.5, 20.0))
+        self.assertEqual(diagnostics.format_value('NECK_GAP', 1.26), "1.3 cm")
+        curves["neck contact asked (cm)"][1][:] = (nan, nan, 2.0, nan)     # frames without a neck aim
+        np.testing.assert_allclose(diagnostics.scores(frames, curves, 'NECK_GAP'), (0.0, 0.0, 1.5, 0.0))
+
+    def test_held_back_entirely_is_ranked(self):
+        """A barrier takes back all of a 20 cm move (solver.contact_target): the frame records the move asked,
+        none made and the 20 cm gap, and Neck Gap ranks it first."""
+        before, move = Vector((0.3, 0.0, 1.2)), Vector((0.0, 0.0, -0.2))
+        feature = magnets.Feature('PLANE', before.copy(), normal=-move.normalized())
+        barrier = magnets.Entry(0, feature, magnets.Params(0.1, crossable=False), Vector())
+        target, _, acted = solver.contact_target(SimpleNamespace(barriers_ignore_distance=True),
+                                                 (None, [], [barrier]), before, move, (Vector(), 10.0, 0.0), 1e-6)
+        self.assertEqual((target, list(acted)), (before, [0]))
+        contacts = (None, solver.NeckContact(move * 0.1, move * 0.1, 0.02),
+                    solver.NeckContact(move, target - before, 0.0, 0))
+        guitar = magnets.GuitarPose(Vector(), Quaternion(), Quaternion(), Vector((1.0, 1.0, 1.0)))
+        recorder = diagnostics.Recorder((1, 2, 3), self.settings.magnets)
+        for i, (contact, gap) in enumerate(zip(contacts, (0.002, 0.003, 0.2))):
+            side = solver.SideResult(before, before, [], False, wrist=before, elbow=before)
+            recorder.note(i, solver.FrameResult(i + 1, 0, 'FOLLOW', guitar, {'L': side, 'R': side}, 2, True, 1.0,
+                                                frame_mode=SimpleNamespace(aim_weight=1.0), neck_contact=contact,
+                                                neck_gap=gap))
+        obj = diagnostics.write(self.settings, recorder, [self.scene.collection])
+        ranked = diagnostics.ranking(obj, 'NECK_GAP')
+        self.assertEqual([frame for frame, _ in ranked], [3, 2])
+        self.assertAlmostEqual(ranked[0][1], 20.0, places=4)
+        self.assertEqual([frame for frame, _ in diagnostics.ranking(obj, 'NECK_CONTACT')], [2])

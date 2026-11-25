@@ -7,7 +7,7 @@ import numpy as np
 from mathutils import Euler, Matrix, Vector
 
 import rigs
-from guitar_rig.core import baker, calibrate, collider, keys, landmarks, mount, solver
+from guitar_rig.core import baker, calibrate, collider, keys, landmarks, modes, mount, solver
 from guitar_rig.core.bonemap import SIDES
 from guitar_rig.core.mathx import rotation_angle
 from guitar_rig.ops import bake as bake_ops
@@ -518,3 +518,118 @@ class ModalTest(BakeTest):
         self.assertEqual(runner.modal(context, SimpleNamespace(type='ESC')), {'CANCELLED'})
         self.assertIn("nothing was changed", runner.reports[-1][1])
         self.assertFalse(any(track.mute for track in self.obj.animation_data.nla_tracks))
+
+
+def offset_hand():
+    """A VRoid whose left hand does not start at its forearm's tail."""
+    obj = rigs.vroid()
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    hand = obj.data.edit_bones["J_Bip_L_Hand"]
+    hand.use_connect = False
+    hand.head += Vector((0.0, -0.02, 0.015))
+    bpy.ops.object.mode_set(mode='OBJECT')
+    obj.name = "VRoid Offset"
+    return obj
+
+
+def report_lines(settings, level=None):
+    return [text for kind, text in calibrate.parse_messages(settings.bake_report) if level in (None, kind)]
+
+
+class NeckContactBakeTest(BakeTest):
+    """A bake whose neck aim is at Max Swing on some frames plays what Solve Frame gives, neck contact and all."""
+    frames = range(1, 7)
+
+    def bake_limited(self, max_swing=8.0):
+        animate(self.obj, self.root, frames=self.frames)
+        plain(self.settings)
+        self.settings.aim_max_swing = math.radians(max_swing)
+        self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
+
+    def solved(self):
+        """{frame: Solve Frame's result} over the baked frames."""
+        results = {}
+        for frame in self.frames:
+            self.scene.frame_set(frame)
+            results[frame] = solver.solve(bpy.context, self.rig)
+            build.deactivate(self.settings)
+        return results
+
+    def test_bake_plays_the_solve(self):
+        self.bake_limited()
+        self.assert_matches_solve(frames=self.frames)
+        results = self.solved()
+        moved = [0.0 if r.neck_contact is None else r.neck_contact.moved for r in results.values()]
+        self.assertGreater(max(moved), 0.01)            # the wrist moved to the neck on some frames,
+        self.assertEqual(min(moved), 0.0)               # and the aim was within the limit on others
+        for frame, result in results.items():
+            self.assertTrue(result.converged, (frame, result.messages))
+            self.assertLessEqual(math.degrees(result.swing), 8.05)
+            self.assertLess(result.neck_gap, 0.005, frame)
+        report = "\n".join(report_lines(self.settings))
+        count = sum(1 for value in moved if value > 0.0)
+        self.assertIn(f"The fretting wrist moved to the neck for it on {count} frames, by up to "
+                      f"{max(moved) * 100.0:.1f} cm (frame {self.frames[moved.index(max(moved))]}).", report)
+        self.assertNotIn("stayed off the neck", report)
+
+    def test_report_names_the_frames_held_back(self):
+        # The hand plays halfway from the shoulder to the neck, and the arm may reach no further than it does.
+        assert bpy.ops.gtr.place_on_mount() == {'FINISHED'}
+        bpy.context.view_layer.update()
+        found = landmarks.find(self.root)
+        neck = found["NECK_PIVOT"].matrix_world.translation.lerp(found["NUT"].matrix_world.translation, 0.5)
+        names = chain(self.obj, 'L')
+        shoulder = rigs.world_head(self.obj, names[0])
+        for frame in self.frames:
+            self.scene.frame_set(frame)
+            rigs.reach(self.obj, *names, shoulder.lerp(neck, 0.4 + 0.03 * frame), Vector((0.0, 0.5, -1.0)))
+            for name in names:
+                pbone = self.obj.pose.bones[name]
+                pbone.keyframe_insert(rotation_prop(pbone))
+        self.scene.frame_start, self.scene.frame_end = self.frames[0], self.frames[-1]
+        plain(self.settings)
+        self.settings.reach_clamp = 0.5
+        self.settings.aim_max_swing = math.radians(2.0)
+        self.assertEqual(bpy.ops.gtr.bake(), {'FINISHED'})
+        held = [frame for frame, result in self.solved().items()
+                if result.neck_contact is not None and result.neck_contact.limit is not None]
+        self.assertTrue(held)
+        warnings = report_lines(self.settings, 'WARNING')
+        self.assertTrue(any(f"The fretting hand stayed off the neck on {len(held)} frames" in text
+                            for text in warnings), warnings)
+        self.assert_matches_solve(frames=self.frames)
+
+
+class NeckContactReportTest(unittest.TestCase):
+    def test_held_back_entirely(self):
+        """The report counts a frame as moved to the neck only where the wrist got nearer it; a frame where
+        something took back all of the move is one of those held back."""
+        stats = baker.Stats()
+        side = SimpleNamespace(error=0.0, clamped=False, collider=None, target=Vector(), fk_wrist=Vector())
+        asked = Vector((0.0, 0.0, -0.2))
+        for frame, contact, gap in ((1, solver.NeckContact(asked * 0.1, asked * 0.1, 0.02), 0.002),
+                                    (2, solver.NeckContact(asked, Vector(), 0.0, 'COLLIDER'), 0.2),
+                                    (3, None, 0.001)):
+            stats.note(frame, SimpleNamespace(sides={'L': side, 'R': side}, converged=True, neck_contact=contact,
+                                              neck=SimpleNamespace(clamped=contact is not None), neck_gap=gap), 1.0)
+        self.assertEqual((stats.aim_limited, stats.contact, stats.contact_frame), (2, 1, 1))
+        self.assertAlmostEqual(stats.contact_largest, 0.02)
+        self.assertEqual((stats.held, stats.held_frame), ([2], 2))
+        self.assertAlmostEqual(stats.held_gap, 0.2)
+        scene_runs = SimpleNamespace(runs=lambda start, end: [(start, end, SimpleNamespace(override=modes.SCENE))])
+        job = SimpleNamespace(stats=stats, frames=[1, 2, 3], start=1, end=3, setup=SimpleNamespace(schedule=scene_runs))
+        report = "\n".join(text for _, text in baker.BakeJob._report(job, 10, 0.0, None, 1.0))
+        self.assertIn("The fretting wrist moved to the neck for it on 1 frames, by up to 2.0 cm (frame 1).", report)
+        self.assertIn("The fretting hand stayed off the neck on 1 frames (2), by up to 20.0 cm (frame 2)", report)
+
+
+class NeckContactOffsetHandTest(NeckContactBakeTest):
+    """The same on a rig whose wrist head is off its forearm's tail: the IK goal carries that offset."""
+    build_rig = staticmethod(offset_hand)
+    test_report_names_the_frames_held_back = None
+
+    def test_bake_plays_the_solve(self):
+        bones, links = self.obj.data.bones, self.rig.chains['L']
+        self.assertGreater((bones[links.hand].head_local - bones[links.forearm].tail_local).length, 0.02)
+        super().test_bake_plays_the_solve()

@@ -1,11 +1,12 @@
 import math
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 from mathutils import Quaternion, Vector
 
-from guitar_rig.core import collider, filters, magnets, solver
+from guitar_rig.core import collider, filters, ik, magnets, solver
 from guitar_rig.core.mathx import rotation_angle
 
 
@@ -153,6 +154,141 @@ class ClampOutTest(unittest.TestCase):
         wrist, push = magnets.clamp_out(Vector((0.0, 0.0, 1.15)), self.entry(tips))
         self.assertAlmostEqual(push, 0.06, places=6)
         self.assertAlmostEqual(wrist.z - 0.2, 1.01, places=6)
+
+    def test_allowed_depth(self):
+        entry = self.entry()
+        wrist = Vector((0.0, 0.0, 1.05))
+        self.assertAlmostEqual(magnets.barrier_depth(wrist, entry), 0.05, places=6)
+        self.assertAlmostEqual(magnets.barrier_depth(Vector((0.0, 0.0, 1.3)), entry), -0.2, places=6)
+        moved, push = magnets.clamp_out(wrist, entry, 0.03)
+        self.assertAlmostEqual(push, 0.02, places=6)
+        self.assertAlmostEqual(moved.z, 1.07, places=6)
+        self.assertEqual(magnets.clamp_out(wrist, entry, 0.05 + 1e-6), (wrist, 0.0))
+
+    def test_keep_out_takes_back_only_what_a_move_added(self):
+        """solver.keep_out with a start point (the neck contact): a hand already in a barrier or the collider may
+        stay as deep as it was, and what held it is listed."""
+        settings = SimpleNamespace(barriers_ignore_distance=True)
+        entry = self.entry()
+        wrist, deep, clear = (Vector((0.0, 0.0, z)) for z in (1.05, 1.07, 1.3))
+        out, moved = solver.keep_out(settings, None, wrist, [], [entry])
+        self.assertAlmostEqual(out.z, 1.1, places=6)
+        self.assertAlmostEqual(moved, 0.05, places=6)
+        acted = []
+        out, moved = solver.keep_out(settings, None, wrist, [], [entry], deep, acted)
+        self.assertAlmostEqual(out.z, 1.07, places=6)
+        self.assertEqual([index for index, _ in acted], [0])
+        self.assertAlmostEqual(acted[0][1], 0.02, places=6)
+        acted = []
+        out, _ = solver.keep_out(settings, None, wrist, [], [entry], clear, acted)
+        self.assertAlmostEqual(out.z, 1.1, places=6)
+        self.assertAlmostEqual(acted[0][1], 0.05, places=6)
+        acted = []
+        self.assertEqual(solver.keep_out(settings, None, wrist, [], [entry], wrist, acted), (wrist, 0.0))
+        self.assertEqual(acted, [])
+        # The collider: the fingertip is 7 cm inside at the wrist asked for and was 4 cm inside at the start.
+        body = collider.Capsule(Vector((0.0, 0.0, 0.0)), Quaternion(), -0.3, 0.2, 0.12)
+        tips = [Vector((0.0, 0.0, -0.15))]
+        wrist, start = Vector((0.0, 0.0, 0.2)), Vector((0.0, 0.0, 0.23))
+        acted = []
+        out, _ = solver.keep_out(settings, body, wrist, tips, [], start, acted)
+        self.assertAlmostEqual(out.z, 0.23, places=6)
+        self.assertEqual(acted[0][0], 'COLLIDER')
+        self.assertAlmostEqual(acted[0][1], 0.03, places=6)
+        out, _ = solver.keep_out(settings, body, wrist, tips, [])
+        self.assertAlmostEqual(out.z, 0.27, places=6)
+
+    def test_keep_out_holds_a_move_through_a_barrier_past_its_reach(self):
+        """With Barriers Ignore Distance off a barrier holds a hand only within its reach behind the plane, but a
+        move that starts in front of it and ends further behind than that went through it, and is held."""
+        settings = SimpleNamespace(barriers_ignore_distance=False)
+        entry = self.entry()                                    # reach 0.1
+        start, deep = Vector((0.0, 0.0, 1.15)), Vector((0.0, 0.0, 0.9))     # hand points 5 cm in front, 20 behind
+        self.assertEqual(solver.keep_out(settings, None, deep, [], [entry]), (deep, 0.0))
+        acted = []
+        out, push = solver.keep_out(settings, None, deep, [], [entry], start, acted)
+        self.assertAlmostEqual(out.z, 1.1, places=6)            # the hand point on the plane
+        self.assertAlmostEqual(push, 0.2, places=6)
+        self.assertEqual([what for what, _ in acted], [0])
+        # A hand that was already beyond its reach behind the plane is not held, wherever it moves there.
+        self.assertEqual(solver.keep_out(settings, None, deep, [], [entry], Vector((0.0, 0.0, 0.95))), (deep, 0.0))
+
+    def contact_scene(self):
+        """(settings, solid, reach, before, move): the neck contact's move along a barrier (the plane z = 0, the
+        hand clear above it), out of the reach of a shoulder below it. The reach clamp alone pulls the target 1.9 cm
+        behind the barrier."""
+        feature = magnets.Feature('PLANE', Vector((0.0, 0.0, 0.0)), normal=Vector((0.0, 0.0, 1.0)))
+        entry = magnets.Entry(3, feature, magnets.Params(0.1, crossable=False), Vector())
+        reach = (Vector((0.0, 0.0, -0.2)), 0.45, 0.0)          # ik.reach_clamp's shoulder, reach and FK distance
+        return (SimpleNamespace(barriers_ignore_distance=True), (None, [], [entry]), reach,
+                Vector((0.3, 0.0, 0.02)), Vector((0.2, 0.0, 0.0)))
+
+    def test_contact_target_meets_the_reach_clamp_and_the_barriers(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        shoulder, radius, _ = reach
+        clamped, _ = ik.reach_clamp(before + move, *reach)
+        self.assertLess(clamped.z, -0.018)                      # keep_out, then the clamp: behind the barrier
+        target, was_clamped, acted = solver.contact_target(settings, solid, before, move, reach, 1e-6)
+        self.assertTrue(was_clamped)
+        self.assertEqual(set(acted), {3, 'REACH'})
+        self.assertGreater(target.z, -1e-6)
+        self.assertLess((target - shoulder).length, radius + 1e-6)
+        # It slid along the barrier to where the reach ends on it.
+        self.assertLess((target - Vector((math.sqrt(radius ** 2 - 0.2 ** 2), 0.0, 0.0))).length, 1e-4)
+        # What meets them both goes through untouched.
+        target, was_clamped, acted = solver.contact_target(settings, solid, before, move * 0.25, reach, 1e-6)
+        self.assertEqual((target, was_clamped, acted), (before + move * 0.25, False, {}))
+
+    def test_contact_target_stops_on_the_way_where_the_turns_do_not_meet(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        with mock.patch.object(solver, "CONTACT_ROUNDS", 1):
+            target, was_clamped, acted = solver.contact_target(settings, solid, before, move, reach, 1e-6)
+        self.assertTrue(was_clamped)
+        self.assertEqual(set(acted), {3})                       # what the target would cross next
+        clamped, _ = ik.reach_clamp(before + move, *reach)
+        along = (target - before).normalized()
+        self.assertLess(along.angle(clamped - before), 1e-4)    # toward the clamped target, as far as it clears
+        self.assertAlmostEqual(target.z, 0.0, delta=1e-6)
+
+    def test_contact_target_stays_where_it_started_when_held_back_entirely(self):
+        settings, solid, reach, before, move = self.contact_scene()
+        feature = magnets.Feature('PLANE', before.copy(), normal=-move.normalized())    # square across the move
+        barrier = magnets.Entry(5, feature, magnets.Params(0.1, crossable=False), Vector())
+        target, was_clamped, acted = solver.contact_target(settings, (None, [], [barrier]), before, move,
+                                                           (reach[0], 10.0, 0.0), 1e-6)
+        self.assertEqual(target, before)
+        self.assertFalse(was_clamped)
+        self.assertEqual(list(acted), [5])
+        self.assertAlmostEqual(acted[5], move.length, places=6)
+
+    def test_contact_target_keeps_out_of_a_collider_a_barrier_pushes_back_into(self):
+        """The torso's capsule pushes a hand that a downward move takes into its top forward, and a barrier pushes
+        it straight back: the two pushes cancel, and no turn meets both. The target stops where the collider
+        begins, though keep_out moves the target the move asked for nowhere."""
+        settings = SimpleNamespace(barriers_ignore_distance=True, collider_enabled=True, autoscale_policy='NONE',
+                                   collider_bottom_m=-0.3, collider_top_m=0.2, collider_radius_m=0.12,
+                                   collider_depth_m=0.0)
+        body = collider.capsule(settings, SimpleNamespace(metres_per_bu=1.0), Vector(), Quaternion())
+        before, move = Vector((0.0, 0.35, 0.06)), Vector((0.0, -0.15, 0.0))
+        feature = magnets.Feature('PLANE', before.copy(), normal=Vector((0.0, 0.0, -1.0)))
+        barrier = magnets.Entry(0, feature, magnets.Params(1.0, crossable=False), Vector())
+        solid, reach = (body, [], [barrier]), (Vector((0.3, 0.4, 0.4)), 0.7, 0.0)
+        self.assertEqual(body.push(before), 0.0)
+        self.assertGreater(body.push(before + move), 0.05)
+        self.assertEqual(solver.keep_out(settings, body, before + move, [], [barrier], before)[1], 0.0)
+        target, was_clamped, acted = solver.contact_target(settings, solid, before, move, reach, 1e-6)
+        self.assertLess(body.push(target), 1e-6)
+        self.assertLess(magnets.barrier_depth(target, barrier), 1e-6)
+        edge = Vector((0.0, 0.2 + math.sqrt(0.12 ** 2 - 0.06 ** 2), 0.06))   # where the move meets the cap
+        self.assertLess((target - edge).length, 1e-5)
+        self.assertFalse(was_clamped)
+        self.assertEqual(list(acted), ['COLLIDER'])
+        # The same with fingertips: one of them meets the cap first.
+        tips = [Vector((0.0, -0.02, 0.0))]
+        target, _, acted = solver.contact_target(settings, (body, tips, [barrier]), before, move, reach, 1e-6)
+        self.assertLess(collider.push(body, target, [target + tips[0]])[1].moved.length, 1e-6)
+        self.assertLess((target - (edge + Vector((0.0, 0.02, 0.0)))).length, 1e-5)
+        self.assertEqual(list(acted), ['COLLIDER'])
 
 
 class HooksTest(unittest.TestCase):

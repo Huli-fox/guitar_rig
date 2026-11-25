@@ -96,7 +96,7 @@ The solve and the bake read the GuitarPrep layer as the mocap. If you apply Prep
    - The overlay shows each magnet and how far it pulled.
    - The panel lists how far each wrist moved and which magnets acted.
 3. Choose the **Mode**:
-   - **Follow** (SAO's default): the guitar swings toward the fretting hand.
+   - **Follow** (SAO's default): the guitar swings toward the fretting hand, by up to **Max Swing**. Where that is not enough, the fretting wrist moves across the neck by the distance the limit leaves, as far as the reach clamp, the barriers and the chest collider allow. This needs the Fretboard Plane magnet; the panel's **Neck contact** row shows the move and the gap that is left.
    - **Align** (SAO's Alt+A): the guitar stays on the chest, and the fretting hand slides along the fretboard edge.
 
    Use **Range Overrides** to solve some frames in the other mode.
@@ -107,6 +107,7 @@ The solve and the bake read the GuitarPrep layer as the mocap. If you apply Prep
 1. Click **Bake**. It solves every frame of the range with a progress bar; Esc cancels and leaves everything as it was. The report gives:
    - the speed;
    - the largest wrist correction;
+   - the frames where the neck aim was at Max Swing, how far the fretting wrist moved to the neck on them, and the frames where it could not get there;
    - frames that did not settle or where the IK missed;
    - how closely the played-back keys match the solve.
 2. Check the worst frames in **Diagnostics**. Fix what is wrong (landmarks, magnets, mode ranges) and bake again.
@@ -254,6 +255,9 @@ Every bake records what the solve did on each frame. The values are keyed as ani
 | `L`/`R <magnet> d (cm)` | The hand point's distance from the magnet. For planes it is signed: negative means behind the plane. |
 | `L`/`R <magnet> w` | The magnet's weight: 1 is a full snap or a barrier clamp |
 | `neck swing (°)`, `fretting wrist turn (°)` | How far the guitar and the fretting wrist turned |
+| `neck contact asked (cm)` | How far the fretting wrist was to move to the neck because Max Swing limited the neck aim (0 where it did not) |
+| `neck contact (cm)` | How far toward the neck it moved, less what the reach clamp, the barriers and the chest collider took back |
+| `neck gap (cm)` | How far the solved fretting hand's aim point is from the neck line (frames with a neck aim) |
 | `solve passes`, `settled` | Solve iterations, and whether the aim and wrists settled |
 | `mode (0 follow, 1 align)`, `neck aim weight` | The frame's mode and aim weight |
 
@@ -262,6 +266,8 @@ The **Diagnostics** panel ranks the five worst frames for a chosen measure; clic
 - **Barrier Depth**: how far a hand was behind a barrier before it was clamped;
 - **IK Miss**;
 - **Neck Swing**;
+- **Neck Contact**: how far the fretting wrist moved toward the neck at Max Swing;
+- **Neck Gap**: how far the hand stayed from the neck on the frames where it was to move there, including those where something held it back entirely;
 - **Wrist Turn**;
 - **Chest Collider**;
 - **Unsettled**.
@@ -275,7 +281,9 @@ The diagnostics describe the solve, not later Smooth or Re-clamp passes. Remove 
 | "The IK misses its target" | IK locks, limits or stretch on the arm bones, or a chain that does not reach |
 | "Played back, the bake is … mm from the solve" | Constraints, drivers or NLA tracks acting on top of the baked arm bones or `GTR_ROOT` |
 | The guitar wobbles between iterations | Lower **Relax**, or raise **Iterations** (Solve > Options) |
-| "The neck aim was limited" | The fretting hand is far from the neck. Check the mount, or raise **Max Swing**. |
+| "The neck aim was limited … the fretting wrist moved … to the neck instead" | The fretting hand was further from the neck than **Max Swing** covers, and the arm made up the rest. Nothing to fix; for a smaller wrist correction check the mount, or raise **Max Swing**. |
+| "The neck aim was limited … the fretting hand is far from the neck" | The same without the Fretboard Plane magnet holding the hand, so the wrist did not move to the neck. Enable the magnet or check its reach. |
+| "The fretting hand is … cm from the neck" | The neck aim is at **Max Swing** and the message names what held the wrist back: the reach clamp, a barrier or the chest collider. Raise **Max Swing**, or check the mount. |
 | A hand goes through the neck or the body | The landmarks (Fretboard Plane, Edge, Barrier). Bake again, or use Re-clamp after smoothing. |
 | The guitar sits in the torso | Capture the mount again, or switch on the Chest Collider |
 | Character frame arrows are wrong | **Flip Facing**, or the bone map's shoulders and head |
